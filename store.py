@@ -23,12 +23,33 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 
+import yaml
 from google.cloud import firestore
 
 from co_lectr.layer1 import Finding
 
 UNASSIGNED = "unassigned"  # class.yml missing or unreadable - see Design.md
+
+CLASS_FILE = Path(".colectr") / "class.yml"
+
+
+def class_id_from(root: Path) -> str:
+    """Which class this submission belongs to.
+
+    One line the student never edits, placed from the template at provisioning.
+    A missing or broken file must not stop the review: the student still gets
+    their questions, the findings just stay out of every class digest.
+    """
+    path = Path(root) / CLASS_FILE
+    if not path.is_file():
+        return UNASSIGNED
+    try:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return str(loaded["class"]).strip() or UNASSIGNED
+    except (yaml.YAMLError, KeyError, TypeError, AttributeError):
+        return UNASSIGNED
 
 
 def review_id(repo: str, pr: int, sha: str) -> str:
@@ -54,6 +75,11 @@ class Store:
         on work that has not changed.
         """
         return self.db.collection("reviews").document(rid).get().exists
+
+    def get_review(self, rid: str) -> dict | None:
+        """The stored review, or None. Lets a repeat run reuse questions for free."""
+        snap = self.db.collection("reviews").document(rid).get()
+        return snap.to_dict() if snap.exists else None
 
     def profile(self, student: str) -> dict:
         """The student's accumulated profile, or {} if they are new.
@@ -118,7 +144,19 @@ class Store:
             "recurring": {rule: firestore.Increment(n) for rule, n in per_rule.items()},
         }, merge=True)
 
-        if class_id != UNASSIGNED:
+        if class_id == UNASSIGNED:
+            return
+
+        self.db.collection("classes").document(class_id).set({
+            "class_id": class_id,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+
+        # A clean submission has nothing to count. Writing `counts: {}` here would
+        # not merge into the running totals - Firestore takes an empty map as an
+        # explicit value and wipes them, so one careful student would erase the
+        # whole class digest.
+        if per_rule:
             self._milestone_ref(class_id, milestone).set({
                 "class_id": class_id,
                 "milestone": milestone,

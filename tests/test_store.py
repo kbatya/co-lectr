@@ -115,3 +115,26 @@ def test_unassigned_students_stay_out_of_every_class_digest(store_and_ids):
 
     assert store.profile(student)["prs_reviewed"] == 1     # still reviewed
     assert store.digest(UNASSIGNED, "ch1") == []           # but not counted
+
+
+@needs_firestore
+def test_a_clean_submission_does_not_wipe_the_class_digest(store_and_ids):
+    """Regression: `counts: {}` is an explicit value to Firestore, not a no-op.
+
+    A student with zero findings used to overwrite the whole class's running
+    totals with an empty map.
+    """
+    store, tag, created = store_and_ids
+    klass = f"{tag}_c"
+    created["classes"].append(klass)
+
+    messy, clean = f"{tag}_messy", f"{tag}_clean"
+    for student, findings in ((messy, [finding("ruff:E722")]), (clean, [])):
+        rid = f"{tag}#{student}#sha"
+        created["students"].append(student); created["reviews"].append(rid)
+        store.record(rid=rid, student=student, class_id=klass, milestone="ch1",
+                     chapters_taught=[], findings=findings, questions=[], model="test")
+
+    rows = store.digest(klass, "ch1")
+    assert [r["rule"] for r in rows] == ["ruff:E722"]
+    assert rows[0]["students"] == [messy]
