@@ -20,6 +20,7 @@ instead of impression. The individual review is the product; the *collective* si
 | 4 | **Google Classroom = roster + gradebook only** | Its API cannot post comments (see Constraints). It is not the feedback channel. |
 | 5 | **One repo per student for the whole year; one PR per chapter milestone** | Matches the course design — students build *one agent that grows across five chapters*, not eight disconnected assignments. |
 | 6 | **The reviewer questions, it does not fix** | Course use-policy: students must explain every submitted line. A reviewer that emits corrected code breaks that policy and becomes a paste source. |
+| 7 | **Class identity lives in `.colectr/class.yml` in each student repo** | The course runs as several parallel classes of ~12, not one cohort, so findings must aggregate per class. One line the student never touches; everything that changes weekly stays in the class record. Decided 2026-08-20. |
 
 ## Mandatory stack (hackathon requirement — not a choice)
 
@@ -97,6 +98,41 @@ Layer 1 is deterministic and cheap; layer 2 is expensive and fallible. Splitting
 - **RAG corpus** = `Syllabus.md` + the assignment spec + a chapter marker. Feedback must be scoped to *what
   has been taught by that week* — flagging a comprehension that is taught in chapter 5 during chapter 2 is
   the fastest way to lose student trust. This scoping is what separates a teaching tool from a linter.
+
+## Class identity & per-class configuration
+
+Decided 2026-08-20, after the single-cohort assumption proved wrong: the course runs as **several
+parallel classes of about twelve**, not one class of 28. The number of classes is not known until the
+timetable is issued, so no class size or student count may be hard-coded anywhere.
+
+Each student repo carries one file, placed from the template at provisioning and never edited by the
+student:
+
+```yaml
+# .colectr/class.yml
+class: 12a
+```
+
+That is the whole of the student side — an identity, nothing else. Everything that changes week to week
+lives in the class record instead:
+
+```
+classes/12a
+  name:             "12-A"
+  chapters_taught:  [ch1 basics, ch2 functions and files, ch3 exceptions]
+  required_symbols: [run_agent, load_config]
+```
+
+One edit per class rather than twelve. A student moving between classes is a one-line change with no data
+migration, and a fifth class is a new record, not new code.
+
+**Aggregation is per class.** "7 of 12 in 12-A" is a reteach signal; "17 of 48" across four classes averages
+that signal away. Comparing classes against each other — the same chapter taught two ways, two different
+outcomes — is data that exists in no student's repo, and it is the strongest available answer to the
+judging question *"does the agent actively synthesize data rather than just read it?"*
+
+**Degradation.** A missing or malformed `class.yml` still produces that student's review; the findings are
+excluded from every class digest and a warning is logged. One broken file must not stop the other eleven.
 
 ## Security — non-negotiable from day one
 
