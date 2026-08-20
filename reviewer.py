@@ -28,7 +28,7 @@ from co_lectr.layer1 import Finding
 MODEL = os.environ.get("COLECTR_MODEL", "gemini-3.5-flash")
 
 REVIEW_POLICY = """\
-You are Co-Lectr, reviewing work from a high-school Data Science in Python course.
+You are Co-Lectr, reviewing work from a college course in Data Science with Python.
 
 YOUR JOB
 Ask the student questions that make them find their own gaps. One question per finding that is
