@@ -44,6 +44,9 @@ def main() -> None:
     parser.add_argument("--no-tests", action="store_true", help="skip pytest (does not execute student code)")
     parser.add_argument("--review", action="store_true", help="also run layer 2 (needs GOOGLE_API_KEY)")
     parser.add_argument("--chapter", nargs="*", default=[], help="chapters taught so far, scoping what may be raised")
+    parser.add_argument("--pace", type=float, default=45.0,
+                        help="seconds between submissions; the free tier allows 5 requests/minute "
+                             "and one review costs several")
     args = parser.parse_args()
 
     # GOOGLE_API_KEY lives in co_lectr/.env, the same file `adk web` reads.
@@ -61,7 +64,9 @@ def main() -> None:
             print(f"   {f.path}:{f.line}  {f.rule}  {f.message}")
 
     if args.review:
-        for submission in submissions:
+        for index, submission in enumerate(submissions):
+            if index:
+                time.sleep(args.pace)
             questions = review_with_backoff(submission, results[submission.name], args.chapter)
             print(f"\n-- {submission.name}: {len(questions)} question(s)")
             for q in questions:
