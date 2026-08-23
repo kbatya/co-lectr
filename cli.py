@@ -3,8 +3,9 @@
     python -m co_lectr.cli co_lectr/samples --require run_agent load_config --review
 
 Findings and questions are written to Firestore on `--review` runs, so a second
-run over an unchanged submission reuses what is already stored and spends no
-Gemini requests. Without `--review` nothing is written: a stored review with no
+run over an unchanged submission, reviewed against the same milestone and the
+same taught chapters, reuses what is already stored and spends no Gemini
+requests. Without `--review` nothing is written: a stored review with no
 questions would look reviewed to the next run.
 """
 
@@ -13,16 +14,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import json
 import os
 import time
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-from co_lectr.aggregator import digest, render
-from co_lectr.layer1 import analyse, python_files
-from co_lectr.reviewer import MODEL
-from co_lectr.store import Store, class_id_from, review_id
+from .aggregator import digest, render
+from .layer1 import analyse, python_files
+from .reviewer import MODEL
+from .store import CLASS_FILE, UNASSIGNED, Store, class_id_from, review_id
 
 
 def fingerprint(root: Path) -> str:
@@ -38,6 +38,18 @@ def fingerprint(root: Path) -> str:
     return h.hexdigest()[:12]
 
 
+def spec_id(milestone: str, require: list[str], chapters: list[str]) -> str:
+    """Hash of the assignment inputs that decide what a review is allowed to say.
+
+    Half of the review id, alongside the code hash. Unchanged code still has to
+    be reviewed again once the milestone moves or another chapter is taught:
+    otherwise the run replays questions scoped to last week's syllabus, and
+    writes nothing into the new milestone's class digest.
+    """
+    payload = json.dumps([milestone, sorted(require), sorted(chapters)])
+    return hashlib.sha256(payload.encode()).hexdigest()[:8]
+
+
 def open_store() -> Store | None:
     if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
         print("(no Firestore credentials - running without persistence)")
@@ -47,7 +59,7 @@ def open_store() -> Store | None:
 
 def review_with_backoff(submission: Path, findings: list, chapters: list[str], attempts: int = 4) -> list[dict]:
     """One review, retried on quota exhaustion."""
-    from co_lectr.reviewer import review
+    from .reviewer import review
 
     for attempt in range(attempts):
         try:
@@ -74,28 +86,41 @@ def main() -> None:
     parser.add_argument("--no-store", action="store_true", help="do not write to Firestore")
     args = parser.parse_args()
 
-    load_dotenv(Path(__file__).parent / ".env")
     store = None if args.no_store else open_store()
 
     submissions = sorted(p for p in args.root.iterdir() if p.is_dir())
-    results = {
-        p.name: analyse(p, required_symbols=tuple(args.require), run_tests=not args.no_tests)
-        for p in submissions
-    }
+    # One read of each class file: the review loop and the digests both need it.
+    class_of = {p.name: class_id_from(p) for p in submissions}
+    results = {}
+    failed = {}
+    for submission in submissions:
+        try:
+            results[submission.name] = analyse(
+                submission, required_symbols=tuple(args.require), run_tests=not args.no_tests)
+        except Exception as exc:  # a hung pytest, a ruff that would not start
+            # One submission must not cost the rest of the class their review.
+            # Left out of `results` rather than counted as clean: no findings is
+            # a real and different answer.
+            failed[submission.name] = f"{type(exc).__name__}: {exc}"
 
     for student, findings in results.items():
         print(f"\n== {student} - {len(findings)} finding(s)")
         for f in findings:
             print(f"   {f.path}:{f.line}  {f.rule}  {f.message}")
+    for student, why in failed.items():
+        print(f"\n== {student} - NOT ANALYSED: {why}")
 
+    spec = spec_id(args.milestone, args.require, args.chapter)
     classes = set()
     if args.review:
         paced = 0
         for submission in submissions:
             student = submission.name
-            class_id = class_id_from(submission)
+            if student in failed:
+                continue
+            class_id = class_of[student]
             classes.add(class_id)
-            rid = review_id(f"local/{student}", 0, fingerprint(submission))
+            rid = review_id(f"local/{student}", 0, f"{fingerprint(submission)}.{spec}")
 
             stored = store.get_review(rid) if store else None
             if stored is not None:
@@ -117,7 +142,20 @@ def main() -> None:
                 print(f"   {q.get('path')}:{q.get('line')}  {q['question']}")
 
     print()
-    print(render(digest(results), class_size=len(results)))
+    if failed:
+        print(f"{len(failed)} submission(s) could not be analysed: {', '.join(sorted(failed))}\n")
+    # One digest per class, never pooled across them: "4 of 6 in 12-A" is a reteach
+    # signal, and the same four counted against every class averages it away.
+    for class_id in sorted(set(class_of.values())):
+        members = [s for s, c in class_of.items() if c == class_id]
+        if class_id == UNASSIGNED:
+            print(f"{len(members)} submission(s) with no readable {CLASS_FILE.as_posix()} - "
+                  f"reviewed, but counted in no class digest: {', '.join(sorted(members))}")
+            continue
+        print(f"Class {class_id} - {len(members)} submission(s)")
+        print(render(digest({s: results[s] for s in members if s in results}),
+                     class_size=len(members)))
+        print()
 
     if store and classes:
         for class_id in sorted(classes):

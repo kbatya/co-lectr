@@ -12,11 +12,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from google.adk.agents import LlmAgent
+from google.adk.agents import LlmAgent  # pyright: ignore[reportMissingImports]
 
-from co_lectr.aggregator import digest, render
-from co_lectr.layer1 import analyse
-from co_lectr.reviewer import MODEL, REVIEW_POLICY
+from .aggregator import digest, render
+from .layer1 import analyse
+from .reviewer import MODEL, REVIEW_POLICY
+from .store import UNASSIGNED, class_id_from
 
 # Every tool path is resolved under this root and checked against it. Point it at
 # the real course checkout with COLECTR_SUBMISSIONS_ROOT.
@@ -33,10 +34,12 @@ You are talking to the lecturer, not to the student. Your tools:
   reviewing anyone. Never review from the code alone.
 - read_file(submission, path) - the code around a finding, so your question names what is actually
   there.
-- class_digest(required_symbols) - what the whole class got wrong, counted exactly.
+- class_digest(required_symbols) - what each class got wrong, counted exactly, one digest
+  per class.
 
 If the lecturer names a student, run the checks, read what you need, then give your questions.
 If they ask about the class, use class_digest and say which gap is worth reteaching and why.
+Its counts are per class - report them that way and never add them up across classes.
 If they have not said which chapters have been taught, ask before you review - rule 2 depends on it.
 
 OUTPUT
@@ -108,20 +111,38 @@ def read_file(submission: str, path: str, start_line: int = 1, end_line: int = 4
 
 
 def class_digest(required_symbols: str = "") -> dict:
-    """Count what the whole class got wrong, from the layer-1 findings.
+    """Count what each class got wrong, from the layer-1 findings.
+
+    One digest per class, never pooled across them: "4 of 6 in 12-A" is a reteach signal,
+    and the same four counted against every class averages it away.
 
     Args:
         required_symbols: comma-separated names the assignment asks for.
 
     Returns:
-        dict with "class_size" and "digest", a ranked text summary of the shared gaps.
+        dict with "classes" - one entry per class, each carrying "class_id", "class_size"
+        and "digest" - and "unassigned", the submissions whose class file is missing or
+        unreadable and which are therefore in no digest.
     """
     submissions = sorted(p for p in SUBMISSIONS_ROOT.iterdir() if p.is_dir())
     results = {
         p.name: analyse(p, required_symbols=_symbols(required_symbols), run_tests=False)
         for p in submissions
     }
-    return {"class_size": len(results), "digest": render(digest(results), class_size=len(results))}
+    class_of = {p.name: class_id_from(p) for p in submissions}
+
+    classes = []
+    for class_id in sorted(set(class_of.values()) - {UNASSIGNED}):
+        members = [s for s, c in class_of.items() if c == class_id]
+        classes.append({
+            "class_id": class_id,
+            "class_size": len(members),
+            "digest": render(digest({s: results[s] for s in members}), class_size=len(members)),
+        })
+    return {
+        "classes": classes,
+        "unassigned": sorted(s for s, c in class_of.items() if c == UNASSIGNED),
+    }
 
 
 root_agent = LlmAgent(

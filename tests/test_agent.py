@@ -32,7 +32,14 @@ def test_run_checks_returns_layer_one_rules():
     assert "ruff:E722" in {f["rule"] for f in findings}
 
 
-def test_class_digest_counts_the_whole_folder():
+def test_class_digest_is_per_class_and_never_pooled():
     result = agent.class_digest("run_agent,load_config")
-    assert result["class_size"] == 10
-    assert "7/10  ruff:E722" in result["digest"]
+    classes = {c["class_id"]: c for c in result["classes"]}
+    assert sorted(classes) == ["12a", "12b"]
+    assert classes["12a"]["class_size"] == 6
+    assert "4/6  ruff:E722" in classes["12a"]["digest"]
+    assert classes["12b"]["class_size"] == 4
+    assert "3/4  ruff:E722" in classes["12b"]["digest"]
+    assert result["unassigned"] == []
+    # 7/10 is what the two classes counted together used to report.
+    assert not any("7/10" in c["digest"] for c in classes.values())
