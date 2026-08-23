@@ -21,6 +21,7 @@ moment by two GitHub Actions runners.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,8 @@ from co_lectr.layer1 import Finding
 UNASSIGNED = "unassigned"  # class.yml missing or unreadable - see Design.md
 
 CLASS_FILE = Path(".colectr") / "class.yml"
+
+CLASS_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")  # what Firestore takes as a document id
 
 
 def class_id_from(root: Path) -> str:
@@ -47,9 +50,14 @@ def class_id_from(root: Path) -> str:
         return UNASSIGNED
     try:
         loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        return str(loaded["class"]).strip() or UNASSIGNED
+        value = str(loaded["class"] or "").strip()
     except (yaml.YAMLError, KeyError, TypeError, AttributeError):
         return UNASSIGNED
+    # An id Firestore will not take is worse than no id at all: `12/a` reads as a
+    # document path and raises mid-write, after the review has been paid for. And
+    # the file sits in the student's own repo, so what it says is accepted, not
+    # trusted - a name outside this shape means unassigned, not a new class.
+    return value if CLASS_ID.fullmatch(value) else UNASSIGNED
 
 
 def review_id(repo: str, pr: int, sha: str) -> str:

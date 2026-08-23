@@ -11,7 +11,7 @@ import uuid
 import pytest
 
 from co_lectr.layer1 import Finding
-from co_lectr.store import UNASSIGNED, Store, review_id
+from co_lectr.store import UNASSIGNED, Store, class_id_from, review_id
 
 needs_firestore = pytest.mark.skipif(
     not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
@@ -29,6 +29,33 @@ def test_review_id_survives_a_slash_in_the_repo_name():
 
 def test_review_id_is_unique_per_commit():
     assert review_id("r", 1, "aaa") != review_id("r", 1, "bbb")
+
+
+def write_class_file(tmp_path, text):
+    (tmp_path / ".colectr").mkdir()
+    (tmp_path / ".colectr" / "class.yml").write_text(text, encoding="utf-8")
+    return tmp_path
+
+
+def test_class_id_is_read_from_the_file(tmp_path):
+    assert class_id_from(write_class_file(tmp_path, "class: 12a")) == "12a"
+
+
+def test_a_missing_file_is_unassigned(tmp_path):
+    assert class_id_from(tmp_path) == UNASSIGNED
+
+
+@pytest.mark.parametrize("text", [
+    "class:",             # key present, no value - used to become the class "None"
+    'class: ""',
+    "class: 12/a",        # a slash is a document path to Firestore, not an id
+    "class: ../reviews",
+    "- not a mapping",
+    "class: [12a]",
+    "",
+])
+def test_an_id_firestore_would_reject_is_unassigned(tmp_path, text):
+    assert class_id_from(write_class_file(tmp_path, text)) == UNASSIGNED
 
 
 @pytest.fixture
