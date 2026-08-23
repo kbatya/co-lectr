@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .aggregator import digest, render
 from .layer1 import analyse, python_files
-from .reviewer import MODEL
+from .reviewer import MODEL, repeat_rules
 from .store import CLASS_FILE, UNASSIGNED, Store, class_id_from, review_id
 
 
@@ -57,13 +57,14 @@ def open_store() -> Store | None:
     return Store.open()
 
 
-def review_with_backoff(submission: Path, findings: list, chapters: list[str], attempts: int = 4) -> list[dict]:
+def review_with_backoff(submission: Path, findings: list, chapters: list[str],
+                        recurring: dict[str, int] | None = None, attempts: int = 4) -> list[dict]:
     """One review, retried on quota exhaustion."""
     from .reviewer import review
 
     for attempt in range(attempts):
         try:
-            return asyncio.run(review(submission, findings, chapters))
+            return asyncio.run(review(submission, findings, chapters, recurring))
         except Exception as exc:  # ADK wraps the 429 in its own error type
             if "RESOURCE_EXHAUSTED" not in str(exc) or attempt == attempts - 1:
                 raise
@@ -130,8 +131,14 @@ def main() -> None:
                 if paced and args.pace:
                     time.sleep(args.pace)
                 paced += 1
-                questions = review_with_backoff(submission, results[student], args.chapter)
+                # Read the profile only on a real review: the cached branch above
+                # never reaches here, so an unchanged submission costs no reads.
+                recurring = store.profile(student).get("recurring", {}) if store else {}
+                questions = review_with_backoff(submission, results[student], args.chapter, recurring)
                 origin = "reviewed by " + MODEL
+                repeats = repeat_rules(results[student], recurring)
+                if repeats:
+                    origin += f", {len(repeats)} rule(s) seen before"
                 if store:
                     store.record(rid=rid, student=student, class_id=class_id,
                                  milestone=args.milestone, chapters_taught=args.chapter,

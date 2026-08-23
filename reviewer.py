@@ -4,6 +4,10 @@ It receives layer-1 facts plus the code and asks the student questions. It never
 writes corrected code: course policy is that students explain every submitted
 line, so a reviewer that emits fixes becomes a paste source.
 
+Where the student's Firestore profile is available, the rules they have hit
+before are passed in with it, so a habit can be named as a habit instead of
+being asked about a third time as though it were new.
+
 Student code is UNTRUSTED. It is passed inside a delimited block that the
 instruction declares to be data, never instructions, and layer-1 findings are
 computed outside the model so nothing in the submission can argue them away.
@@ -48,6 +52,14 @@ HARD RULES
 """
 
 INSTRUCTION = REVIEW_POLICY + """
+PRIOR HISTORY
+Some findings come with a count of how often this student has hit that same rule in earlier
+submissions. When you ask about one of those, say so: the third bare `except:` is a habit, and a
+question that names the pattern teaches more than the same question asked again as if it were the
+first time. Only the rules listed under PRIOR HISTORY have one - never suggest a student has done
+something before unless it is on that list, and never say which submission it was in, because you
+are given counts and nothing else.
+
 OUTPUT
 Return ONLY a JSON array. Each element:
   {"path": "<file>", "line": <int>, "rule": "<layer-1 rule id or "">", "question": "<one question>"}
@@ -83,7 +95,33 @@ def build_reviewer(root: Path, model: str = MODEL) -> LlmAgent:
     )
 
 
-def build_prompt(root: Path, findings: list[Finding], chapters_taught: list[str]) -> str:
+def repeat_rules(findings: list[Finding], recurring: dict[str, int]) -> dict[str, int]:
+    """The part of this student's profile that the current findings can speak to.
+
+    Only rules the submission hits again. A rule the student has since fixed is
+    not something to bring up, and putting it in front of the model invites a
+    question about code that is no longer there.
+    """
+    return {f.rule: recurring[f.rule] for f in findings if recurring.get(f.rule)}
+
+
+def prior_history(findings: list[Finding], recurring: dict[str, int]) -> str:
+    repeats = repeat_rules(findings, recurring)
+    if not repeats:
+        return ""
+    lines = "\n".join(
+        f"- {rule}: hit {count} time(s) in this student's earlier submissions"
+        for rule, count in sorted(repeats.items())
+    )
+    return f"PRIOR HISTORY (counts of occurrences, not of submissions):\n{lines}\n\n"
+
+
+def build_prompt(
+    root: Path,
+    findings: list[Finding],
+    chapters_taught: list[str],
+    recurring: dict[str, int] | None = None,
+) -> str:
     root = Path(root)
     files = []
     for p in sorted(root.rglob("*.py")):
@@ -93,7 +131,8 @@ def build_prompt(root: Path, findings: list[Finding], chapters_taught: list[str]
     return (
         f"CHAPTERS TAUGHT SO FAR: {', '.join(chapters_taught) or '(none specified)'}\n\n"
         f"LAYER-1 FINDINGS (facts, computed outside you):\n{facts}\n\n"
-        "<student_submission>\n" + "\n\n".join(files) + "\n</student_submission>"
+        + prior_history(findings, recurring or {})
+        + "<student_submission>\n" + "\n\n".join(files) + "\n</student_submission>"
     )
 
 
@@ -109,11 +148,17 @@ def parse_questions(text: str) -> list[dict]:
     return [d for d in data if isinstance(d, dict) and "question" in d]
 
 
-async def review(root: Path, findings: list[Finding], chapters_taught: list[str]) -> list[dict]:
+async def review(
+    root: Path,
+    findings: list[Finding],
+    chapters_taught: list[str],
+    recurring: dict[str, int] | None = None,
+) -> list[dict]:
     agent = build_reviewer(root)
     runner = InMemoryRunner(agent=agent, app_name="co_lectr")
     session = await runner.session_service.create_session(app_name="co_lectr", user_id="lecturer")
-    message = types.Content(role="user", parts=[types.Part(text=build_prompt(root, findings, chapters_taught))])
+    prompt = build_prompt(root, findings, chapters_taught, recurring)
+    message = types.Content(role="user", parts=[types.Part(text=prompt)])
 
     reply = ""
     async for event in runner.run_async(user_id="lecturer", session_id=session.id, new_message=message):
