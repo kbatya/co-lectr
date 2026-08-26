@@ -1,0 +1,17 @@
+# Keep the Cloud Run image small and free of anything secret.
+.venv/
+.git/
+.adk/
+.secrets/
+.env
+*.pem
+service-account*.json
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Not needed at runtime: docs, sample data, the thumbnails.
+*.md
+samples/
+co-lectr-thumbnail.png
+thumbnail.jpg
