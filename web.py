@@ -104,11 +104,38 @@ def webhook():
     if target is None:
         return jsonify(ignored="action"), 200
 
-    # The seam. Step 5 fetches target.sha, runs analyse() + the reviewer inside
-    # the container, and posts the questions to the PR. For now, acknowledge and
-    # name what would be reviewed — that is what the health-check milestone needs.
-    app.logger.info("would review %s PR#%s @ %s", target.repo, target.pr, target.sha)
+    # The seam (Design.md step 5). With a token configured, fetch the head, run
+    # the two-layer review and post the questions — on a background thread, so a
+    # slow Gemini call never holds GitHub's ~10s delivery open. Without a token
+    # the receiver still acknowledges and names what would be reviewed.
+    if os.environ.get("GITHUB_TOKEN"):
+        dispatch_review(target)
+    else:
+        app.logger.info("would review %s PR#%s @ %s (no GITHUB_TOKEN set)",
+                        target.repo, target.pr, target.sha)
     return jsonify(accepted=asdict(target)), 202
+
+
+def dispatch_review(target: ReviewTarget) -> None:
+    """Run the review off the request thread.
+
+    The review core is imported lazily inside the worker so the health check and
+    cold start never pay for ADK, Gemini or Firestore — the endpoint stays cheap
+    to start, and only a real pull request pulls the heavy path in.
+    """
+    import threading
+
+    def worker() -> None:
+        import asyncio
+
+        from co_lectr.pipeline import config_from_env, run_review
+        try:
+            asyncio.run(run_review(target, **config_from_env()))
+        except Exception:
+            app.logger.exception("review of %s PR#%s @ %s failed",
+                                 target.repo, target.pr, target.sha)
+
+    threading.Thread(target=worker, daemon=True).start()
 
 
 if __name__ == "__main__":

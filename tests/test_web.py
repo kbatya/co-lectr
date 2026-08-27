@@ -102,6 +102,15 @@ def test_a_reviewable_pr_is_accepted_with_its_target(client):
     }
 
 
+def test_a_reviewable_pr_dispatches_the_review_when_a_token_is_configured(client, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    dispatched = []
+    monkeypatch.setattr("co_lectr.web.dispatch_review", lambda target: dispatched.append(target))
+    resp = post(client, pr_event(number=7, sha="deadbeef"))
+    assert resp.status_code == 202
+    assert dispatched and dispatched[0].sha == "deadbeef"
+
+
 def test_an_action_we_do_not_review_is_dropped(client):
     resp = post(client, pr_event(action="labeled"))
     assert resp.status_code == 200
