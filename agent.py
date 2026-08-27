@@ -17,7 +17,7 @@ from google.adk.agents import LlmAgent  # pyright: ignore[reportMissingImports]
 from .aggregator import digest, render
 from .layer1 import analyse
 from .reviewer import MODEL, REVIEW_POLICY
-from .store import UNASSIGNED, class_id_from
+from .store import UNASSIGNED, Store, class_id_from
 
 # Every tool path is resolved under this root and checked against it. Point it at
 # the real course checkout with COLECTR_SUBMISSIONS_ROOT.
@@ -34,11 +34,15 @@ You are talking to the lecturer, not to the student. Your tools:
   reviewing anyone. Never review from the code alone.
 - read_file(submission, path) - the code around a finding, so your question names what is actually
   there.
-- class_digest(required_symbols) - what each class got wrong, counted exactly, one digest
-  per class.
+- class_digest(required_symbols) - what each class got wrong right now, recomputed from the checkout
+  you have in front of you, one digest per class.
+- stored_class_digest(class_id, milestone) - the same picture read from Firestore: what has accumulated
+  across the pull requests actually reviewed this milestone. Use this when the lecturer asks what a class
+  got wrong "this milestone" or "so far"; class_digest recomputes from the local checkout instead.
 
 If the lecturer names a student, run the checks, read what you need, then give your questions.
-If they ask about the class, use class_digest and say which gap is worth reteaching and why.
+If they ask about the class, use class_digest (or stored_class_digest for the milestone accumulated in
+Firestore) and say which gap is worth reteaching and why.
 Its counts are per class - report them that way and never add them up across classes.
 If they have not said which chapters have been taught, ask before you review - rule 2 depends on it.
 
@@ -145,10 +149,30 @@ def class_digest(required_symbols: str = "") -> dict:
     }
 
 
+def stored_class_digest(class_id: str, milestone: str = "pilot") -> dict:
+    """What one class got wrong this milestone, read from Firestore.
+
+    The picture accumulated across every PR actually reviewed - the class-level counts the webhook path
+    writes as students submit, not a fresh pass over a local folder.
+
+    Args:
+        class_id: the class, e.g. "12a".
+        milestone: which milestone, e.g. "pilot" or "ch3". Defaults to "pilot".
+
+    Returns:
+        dict with "class_id", "milestone" and "rows" (each: rule, students, occurrences), most
+        widespread first; or "error" if Firestore is not configured.
+    """
+    if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return {"error": "Firestore is not configured (no GOOGLE_APPLICATION_CREDENTIALS)"}
+    rows = Store.open().digest(class_id, milestone)
+    return {"class_id": class_id, "milestone": milestone, "rows": rows}
+
+
 root_agent = LlmAgent(
     name="co_lectr",
     model=MODEL,
     description="Reviews student Python submissions with questions, and reports what the class got wrong.",
     instruction=INSTRUCTION,
-    tools=[list_submissions, run_checks, read_file, class_digest],
+    tools=[list_submissions, run_checks, read_file, class_digest, stored_class_digest],
 )

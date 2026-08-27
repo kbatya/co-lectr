@@ -4,10 +4,10 @@ from co_lectr import agent
 from co_lectr.reviewer import INSTRUCTION as BATCH_INSTRUCTION
 
 
-def test_root_agent_exposes_the_four_tools():
+def test_root_agent_exposes_its_tools():
     assert agent.root_agent.name == "co_lectr"
     assert [t.__name__ for t in agent.root_agent.tools] == [
-        "list_submissions", "run_checks", "read_file", "class_digest",
+        "list_submissions", "run_checks", "read_file", "class_digest", "stored_class_digest",
     ]
 
 
@@ -43,3 +43,28 @@ def test_class_digest_is_per_class_and_never_pooled():
     assert result["unassigned"] == []
     # 7/10 is what the two classes counted together used to report.
     assert not any("7/10" in c["digest"] for c in classes.values())
+
+
+def test_stored_class_digest_needs_firestore_credentials(monkeypatch):
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    assert "error" in agent.stored_class_digest("12a")
+
+
+def test_stored_class_digest_reads_the_class_counts_from_the_store(monkeypatch):
+    class FakeStore:
+        @classmethod
+        def open(cls):
+            return cls()
+
+        def digest(self, class_id, milestone):
+            assert (class_id, milestone) == ("12a", "ch3")
+            return [{"rule": "ruff:E722", "students": ["noa", "milad"], "occurrences": 2}]
+
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "key.json")
+    monkeypatch.setattr(agent, "Store", FakeStore)
+
+    result = agent.stored_class_digest("12a", "ch3")
+
+    assert result["class_id"] == "12a"
+    assert result["rows"][0]["rule"] == "ruff:E722"
+    assert result["rows"][0]["students"] == ["noa", "milad"]
