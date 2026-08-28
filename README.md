@@ -13,7 +13,7 @@ category **Collaborative Partner**. Design notes and the decisions behind them l
 
 ## The friction
 
-A lecturer teaching *Data Science in a Python Environment* runs several parallel classes of about twelve.
+A lecturer teaching a software course — currently in Python — runs several parallel classes of about twelve.
 Each student builds one agent that grows across five chapters. That is roughly sixty submissions a
 milestone, and the useful review — the one that arrives while the student still remembers writing the
 code — is the one nobody has time to write.
@@ -43,6 +43,8 @@ Co-Lectr fixes both halves with the same pass over the code.
   *what did 12-B get wrong?*
 
 ## Architecture
+
+A standalone version of this diagram is checked in as [`architecture.svg`](architecture.svg).
 
 ```mermaid
 flowchart TD
@@ -144,7 +146,7 @@ Class 12b - 4 submission(s)
            student_07, student_08, student_09
 ```
 
-For layer 2 — the questions — copy `co_lectr/.env.example` to `co_lectr/.env`, put your key in it, and add
+For layer 2 — the questions — create `co_lectr/.env` with `GOOGLE_API_KEY=<your key>` in it, and add
 `--review` plus the chapters taught so far:
 
 ```bash
@@ -169,8 +171,8 @@ The agent runs the same layer-1 checks as tools before it says anything, so its 
 python -m pytest co_lectr/tests -q
 ```
 
-103 tests. The Firestore integration tests skip themselves when no credentials are present, so a
-clean-machine run reports **96 passed, 7 skipped**.
+118 tests. The Firestore integration tests skip themselves when no credentials are present, so a
+clean-machine run reports **110 passed, 8 skipped**.
 
 ## The webhook service
 
@@ -253,7 +255,7 @@ gcloud run services replace service.yaml --region us-central1
 
 ## Configuration
 
-`co_lectr/.env` (git-ignored — see `.env.example`):
+`co_lectr/.env` (git-ignored):
 
 | Variable | Needed for | Notes |
 |---|---|---|

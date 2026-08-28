@@ -10,7 +10,7 @@ and the whole test suite need no credentials; layer 2, Firestore and deploy each
 
 | Step | Needs credentials? |
 |---|---|
-| Install + run the tests (96 pass, 7 skip without a Firestore key) | No |
+| Install + run the tests (110 pass, 8 skip without a Firestore key) | No |
 | Layer 1 over the samples (facts, the class digest) | No |
 | Layer 2 — the questions (`--review`, `adk web`) | A Gemini API key |
 | Firestore — persistence, the stored class digest | A service-account key |
@@ -43,7 +43,7 @@ pip install -r co_lectr/requirements.txt
 python -m pytest co_lectr/tests -q
 ```
 
-Expect **96 passed, 7 skipped** — the 7 skips are the Firestore integration tests, which need a
+Expect **110 passed, 8 skipped** — the 8 skips are the Firestore integration tests, which need a
 service-account key. The tests are offline: the network and the model are faked, so this passes on any
 machine with no keys and no internet access to Google.
 

@@ -1,7 +1,7 @@
 # Co-Lectr — Design (v1)
 
 > **Collective Learning & Code Review** — *Where students get a code reviewer, and lecturers get their time back.*
-> Standalone project, piloted in *Data Science in a Python Environment* (grade י״ג, Sept 2026).
+> Standalone project, piloted in a software course taught in Python (first-year college, Sept 2026).
 > Course context: [../teaching-agent-AI/Teaching-Approach.md](../teaching-agent-AI/Teaching-Approach.md).
 > Status: **design only — no code yet.** Session 2026-08-16.
 
