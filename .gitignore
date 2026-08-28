@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 .pytest_cache/
 submission-list.txt
+Hackathon-Rules.md
