@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1000" viewBox="0 0 1500 1000" font-family="'Segoe UI', Roboto, -apple-system, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="1500" height="1000" fill="#ffffff"/>
+
+  <!-- Header -->
+  <text x="60" y="72" font-size="38" font-weight="700" fill="#1f2933">A review, as questions</text>
+  <text x="62" y="108" font-size="19" fill="#5b6b7a">Co-Lectr posts one comment per pull request — it asks, it never fixes. Example: student_04, chapter 2.</text>
+
+  <!-- ===== Left: code panel ===== -->
+  <rect x="60" y="150" width="620" height="760" rx="12" fill="#f6f8fa" stroke="#d8dee4" stroke-width="1.5"/>
+  <circle cx="88" cy="184" r="5" fill="#fe5f57"/><circle cx="106" cy="184" r="5" fill="#febc2e"/><circle cx="124" cy="184" r="5" fill="#28c840"/>
+  <text x="150" y="190" font-size="14.5" font-weight="600" fill="#3c4a56" font-family="Consolas, monospace">agent.py</text>
+  <text x="656" y="190" font-size="13" fill="#8a97a3" text-anchor="end">student_04</text>
+  <line x1="60" y1="206" x2="680" y2="206" stroke="#e6eaee" stroke-width="1.5"/>
+
+  <!-- highlight bands for flagged lines -->
+  <rect x="72" y="223" width="596" height="24" rx="4" fill="#fff3d6"/><rect x="72" y="223" width="4" height="24" fill="#f9ab00"/>
+  <rect x="72" y="473" width="596" height="24" rx="4" fill="#fff3d6"/><rect x="72" y="473" width="4" height="24" fill="#f9ab00"/>
+  <rect x="72" y="548" width="596" height="24" rx="4" fill="#ffe2e0"/><rect x="72" y="548" width="4" height="24" fill="#e5534b"/>
+
+  <g font-family="Consolas, 'Courier New', monospace" font-size="15">
+    <!-- line numbers -->
+    <g fill="#aab4bf" text-anchor="end">
+      <text x="128" y="241">1</text><text x="128" y="266">2</text><text x="128" y="291">3</text><text x="128" y="316">4</text>
+      <text x="128" y="341">5</text><text x="128" y="366">6</text><text x="128" y="391">7</text><text x="128" y="416">8</text>
+      <text x="128" y="441">9</text><text x="128" y="466">10</text><text x="128" y="491">11</text><text x="128" y="516">12</text>
+      <text x="128" y="541">13</text><text x="128" y="566">14</text><text x="128" y="591">15</text><text x="128" y="616">16</text>
+      <text x="128" y="641">17</text><text x="128" y="666">18</text><text x="128" y="691">19</text>
+    </g>
+    <!-- code (explicit x per indent level: 0=146, 4sp=182, 8sp=218) -->
+    <g fill="#24292f">
+      <text x="146" y="241"><tspan fill="#cf222e">import</tspan> os, sys</text>
+      <text x="146" y="266"><tspan fill="#cf222e">import</tspan> json</text>
+      <text x="146" y="316">API_KEY <tspan fill="#cf222e">=</tspan> <tspan fill="#0a3069">"AIzaSyDUMMYKEYFORTESTINGONLY123456789"</tspan></text>
+      <text x="146" y="366"><tspan fill="#cf222e">def</tspan> <tspan fill="#8250df">load_config</tspan>(path=<tspan fill="#0a3069">"config.json"</tspan>):</text>
+      <text x="182" y="391"><tspan fill="#cf222e">with</tspan> <tspan fill="#8250df">open</tspan>(path) <tspan fill="#cf222e">as</tspan> f:</text>
+      <text x="218" y="416"><tspan fill="#cf222e">return</tspan> json.load(f)</text>
+      <text x="146" y="466"><tspan fill="#cf222e">def</tspan> <tspan fill="#8250df">run_agent</tspan>(q):</text>
+      <text x="182" y="491">cfg <tspan fill="#cf222e">=</tspan> load_config()</text>
+      <text x="182" y="516"><tspan fill="#cf222e">try</tspan>:</text>
+      <text x="218" y="541">answer <tspan fill="#cf222e">=</tspan> call_model(q, API_KEY)</text>
+      <text x="182" y="566"><tspan fill="#cf222e">except</tspan>:</text>
+      <text x="218" y="591">answer <tspan fill="#cf222e">=</tspan> <tspan fill="#0a3069">"error"</tspan></text>
+      <text x="182" y="616"><tspan fill="#cf222e">return</tspan> answer</text>
+      <text x="146" y="666"><tspan fill="#cf222e">def</tspan> <tspan fill="#8250df">call_model</tspan>(q, key):</text>
+      <text x="182" y="691"><tspan fill="#cf222e">return</tspan> <tspan fill="#0a3069">"stub"</tspan></text>
+    </g>
+  </g>
+
+  <!-- ===== Right: the PR comment ===== -->
+  <rect x="720" y="150" width="720" height="760" rx="12" fill="#ffffff" stroke="#d8dee4" stroke-width="1.5"/>
+  <!-- comment header -->
+  <circle cx="762" cy="192" r="18" fill="#12a4a4"/>
+  <text x="762" y="199" font-size="18" font-weight="700" fill="#ffffff" text-anchor="middle">C</text>
+  <text x="792" y="188" font-size="17" font-weight="700" fill="#1f2933">Co-Lectr</text>
+  <rect x="880" y="176" width="42" height="19" rx="9.5" fill="#eef1f4"/>
+  <text x="901" y="190" font-size="11.5" fill="#5b6b7a" text-anchor="middle">bot</text>
+  <text x="792" y="208" font-size="13" fill="#8a97a3">commented on the pull request</text>
+  <!-- Example ribbon -->
+  <rect x="1300" y="172" width="112" height="26" rx="13" fill="#fef7e0" stroke="#f9ab00" stroke-width="1.2"/>
+  <text x="1356" y="189" font-size="12.5" font-weight="600" fill="#b06000" text-anchor="middle">example</text>
+  <line x1="720" y1="228" x2="1440" y2="228" stroke="#eef1f4" stroke-width="1.5"/>
+
+  <text x="752" y="262" font-size="17" font-weight="700" fill="#1f2933">Co-Lectr review</text>
+  <text x="752" y="292" font-size="15" fill="#3c4a56">Work through these — I ask, I don’t fix. Explain each in your</text>
+  <text x="752" y="314" font-size="15" fill="#3c4a56">own words; the point is that you can.</text>
+
+  <!-- Q1 -->
+  <rect x="752" y="342" width="132" height="26" rx="6" fill="#eef1f4"/>
+  <text x="766" y="360" font-size="13.5" fill="#1558c0" font-family="Consolas, monospace">agent.py:14</text>
+  <text x="752" y="398" font-size="15.5" fill="#1f2933">Your bare <tspan font-family="Consolas, monospace" font-size="14">except:</tspan> catches every error and collapses it</text>
+  <text x="752" y="420" font-size="15.5" fill="#1f2933">to <tspan font-family="Consolas, monospace" font-size="14">"error"</tspan> — which real failures could you no longer tell apart?</text>
+
+  <!-- Q2 -->
+  <rect x="752" y="450" width="132" height="26" rx="6" fill="#eef1f4"/>
+  <text x="766" y="468" font-size="13.5" fill="#1558c0" font-family="Consolas, monospace">agent.py:11</text>
+  <text x="752" y="506" font-size="15.5" fill="#1f2933">You bind <tspan font-family="Consolas, monospace" font-size="14">cfg = load_config()</tspan> but nothing ever reads</text>
+  <text x="752" y="528" font-size="15.5" fill="#1f2933"><tspan font-family="Consolas, monospace" font-size="14">cfg</tspan> — what did you intend it to do inside <tspan font-family="Consolas, monospace" font-size="14">run_agent</tspan>?</text>
+
+  <!-- Q3 -->
+  <rect x="752" y="558" width="122" height="26" rx="6" fill="#eef1f4"/>
+  <text x="766" y="576" font-size="13.5" fill="#1558c0" font-family="Consolas, monospace">agent.py:1</text>
+  <text x="752" y="614" font-size="15.5" fill="#1f2933"><tspan font-family="Consolas, monospace" font-size="14">os</tspan> and <tspan font-family="Consolas, monospace" font-size="14">sys</tspan> are imported on line 1 but never used —</text>
+  <text x="752" y="636" font-size="15.5" fill="#1f2933">what were you reaching for when you added them?</text>
+
+  <line x1="720" y1="678" x2="1440" y2="678" stroke="#eef1f4" stroke-width="1.5"/>
+  <text x="752" y="712" font-size="13" fill="#8a97a3">3 questions. Facts from ruff · ast · pytest, computed outside the model;</text>
+  <text x="752" y="732" font-size="13" fill="#8a97a3">questions from gemini-3.5-flash. No corrected code — by design.</text>
+
+  <!-- tie-line callout -->
+  <text x="752" y="792" font-size="15" font-weight="700" fill="#1558c0">Every question is anchored to a real layer-1 finding.</text>
+  <text x="752" y="818" font-size="14.5" fill="#3c4a56">A question about a rule ruff/ast/pytest never raised is dropped before</text>
+  <text x="752" y="840" font-size="14.5" fill="#3c4a56">it is ever posted — the model cannot invent feedback.</text>
+</svg>
