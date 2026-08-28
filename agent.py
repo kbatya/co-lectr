@@ -39,6 +39,9 @@ You are talking to the lecturer, not to the student. Your tools:
 - stored_class_digest(class_id, milestone) - the same picture read from Firestore: what has accumulated
   across the pull requests actually reviewed this milestone. Use this when the lecturer asks what a class
   got wrong "this milestone" or "so far"; class_digest recomputes from the local checkout instead.
+- flagged_reviews(class_id, milestone) - the reviews where a prompt-injection attempt was detected in a
+  student's submission. Use this when the lecturer asks whether anyone tried to game the reviewer, or as a
+  safety check before trusting a milestone's questions.
 
 If the lecturer names a student, run the checks, read what you need, then give your questions.
 If they ask about the class, use class_digest (or stored_class_digest for the milestone accumulated in
@@ -169,10 +172,30 @@ def stored_class_digest(class_id: str, milestone: str = "pilot") -> dict:
     return {"class_id": class_id, "milestone": milestone, "rows": rows}
 
 
+def flagged_reviews(class_id: str = "", milestone: str = "") -> dict:
+    """Reviews where a prompt-injection attempt was detected in student code.
+
+    The reviewer reports a directive found in a submission as an injection
+    attempt; this reads back the ones the delivery path recorded, so a detection
+    reaches the lecturer instead of stopping at a log line.
+
+    Args:
+        class_id: narrow to one class, e.g. "12a". Empty for all classes.
+        milestone: narrow to one milestone, e.g. "ch3". Empty for all milestones.
+
+    Returns:
+        dict with "flagged" (each: student, repo, pr, class_id, milestone), or
+        "error" if Firestore is not configured.
+    """
+    if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return {"error": "Firestore is not configured (no GOOGLE_APPLICATION_CREDENTIALS)"}
+    return {"flagged": Store.open().flagged_reviews(class_id, milestone)}
+
+
 root_agent = LlmAgent(
     name="co_lectr",
     model=MODEL,
     description="Reviews student Python submissions with questions, and reports what the class got wrong.",
     instruction=INSTRUCTION,
-    tools=[list_submissions, run_checks, read_file, class_digest, stored_class_digest],
+    tools=[list_submissions, run_checks, read_file, class_digest, stored_class_digest, flagged_reviews],
 )

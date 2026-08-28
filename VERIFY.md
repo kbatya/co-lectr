@@ -10,7 +10,7 @@ and the whole test suite need no credentials; layer 2, Firestore and deploy each
 
 | Step | Needs credentials? |
 |---|---|
-| Install + run the 72 tests | No |
+| Install + run the tests (96 pass, 7 skip without a Firestore key) | No |
 | Layer 1 over the samples (facts, the class digest) | No |
 | Layer 2 — the questions (`--review`, `adk web`) | A Gemini API key |
 | Firestore — persistence, the stored class digest | A service-account key |
@@ -43,13 +43,14 @@ pip install -r co_lectr/requirements.txt
 python -m pytest co_lectr/tests -q
 ```
 
-Expect **72 passed**. The tests are offline: the network and the model are faked, so this passes on any
+Expect **96 passed, 7 skipped** — the 7 skips are the Firestore integration tests, which need a
+service-account key. The tests are offline: the network and the model are faked, so this passes on any
 machine with no keys and no internet access to Google.
 
 ## 4. Layer 1 over the samples — no credentials
 
 ```bash
-python -m co_lectr.cli co_lectr/samples --require run_agent load_config --no-tests --no-store
+python -m co_lectr.cli co_lectr/samples --require run_agent load_config --no-store
 ```
 
 Expect a per-class digest, e.g. `4/6  ruff:E722` for class 12a — computed by `ruff`/`ast` alone.
@@ -63,7 +64,7 @@ GOOGLE_API_KEY=<your Gemini API key>
 ```
 
 ```bash
-python -m co_lectr.cli co_lectr/samples --require run_agent load_config --no-tests --no-store --review --chapter "ch1 basics" "ch2 functions and files" "ch3 exceptions"
+python -m co_lectr.cli co_lectr/samples --require run_agent load_config --no-store --review --chapter "ch1 basics" "ch2 functions and files" "ch3 exceptions"
 ```
 
 Expect one question per finding, anchored to `file:line`, never a corrected snippet.

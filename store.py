@@ -6,12 +6,14 @@ Three collections, as documented in Design.md:
     students/{login}                          the misconception profile, accumulating
     classes/{class}/milestones/{milestone}    what that class got wrong, counted
 
-Two things this deliberately does not store:
+Two deliberate limits on what is stored:
 
-* **Student code.** Only rule ids, paths and line numbers. The code already lives
-  in the student's own repo, and these are minors' submissions - the less of it
+* **No whole files.** A review keeps rule ids, paths, lines, the finding messages
+  and the questions - not the source. A message or a question can quote one
+  identifier or the line it asks about, but the code itself already lives in the
+  student's own repo, and these are minors' submissions: the less of their work
   sits in a cloud database, the fewer consent problems there are.
-* **Anything derived by the model, in the counts.** The class picture is built
+* **Nothing derived by the model, in the counts.** The class picture is built
   from layer-1 rule ids only, because those count exactly.
 
 Counters use Firestore's atomic Increment and ArrayUnion rather than
@@ -21,13 +23,17 @@ moment by two GitHub Actions runners.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+from google.api_core.exceptions import AlreadyExists
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from co_lectr.layer1 import Finding
 
@@ -60,9 +66,36 @@ def class_id_from(root: Path) -> str:
     return value if CLASS_ID.fullmatch(value) else UNASSIGNED
 
 
+GITHUB_LOGIN = re.compile(r"[A-Za-z0-9](?:-?[A-Za-z0-9]){0,38}")  # GitHub's own shape
+
+
+def student_id(login: str) -> str:
+    """A GitHub login, validated into a Firestore-safe document id.
+
+    The login comes from the pull-request payload, so it is GitHub's, not the
+    student's to type — but it still becomes a document id, and an id Firestore
+    would refuse (or one shaped unlike a login) must not reach a write. Anything
+    off-shape lands in `unassigned` rather than crashing the review.
+    """
+    login = (login or "").strip()
+    return login if GITHUB_LOGIN.fullmatch(login) else UNASSIGNED
+
+
 def review_id(repo: str, pr: int, sha: str) -> str:
     """Stable document id. A repo is `owner/name`, and `/` is illegal in an id."""
     return f"{repo}#{pr}#{sha}".replace("/", "_")
+
+
+def spec_id(milestone: str, require: list[str], chapters: list[str]) -> str:
+    """Hash of the assignment inputs that decide what a review is allowed to say.
+
+    Folded into the review id alongside the commit sha. Unchanged code still has
+    to be reviewed again once the milestone moves or another chapter is taught:
+    otherwise the run replays questions scoped to last week's syllabus, and
+    writes nothing into the new milestone's class digest.
+    """
+    payload = json.dumps([milestone, sorted(require), sorted(chapters)])
+    return hashlib.sha256(payload.encode()).hexdigest()[:8]
 
 
 @dataclass
@@ -84,6 +117,35 @@ class Store:
         """
         return self.db.collection("reviews").document(rid).get().exists
 
+    # --- claim ---------------------------------------------------------------
+
+    def reserve(self, rid: str, *, student: str, milestone: str) -> bool:
+        """Claim this review id atomically. True if we won it, False if taken.
+
+        `create()` fails when the document already exists, so the reservation
+        itself is the lock: two deliveries carrying the same head sha race to
+        create the placeholder, exactly one wins, and only the winner reviews
+        and posts. It replaces a check-then-act `has_review`, which two threads
+        could both pass before either wrote. `record` overwrites the placeholder
+        with the finished review.
+        """
+        try:
+            self.db.collection("reviews").document(rid).create({
+                "student": student,
+                "milestone": milestone,
+                "status": "reviewing",
+                "created_at": firestore.SERVER_TIMESTAMP,
+            })
+            return True
+        except AlreadyExists:
+            return False
+
+    def release(self, rid: str) -> None:
+        """Drop a reservation whose review never posted, so a redelivery of the
+        same commit can try again instead of being locked out by the placeholder.
+        Only called when the work failed before the comment went out."""
+        self.db.collection("reviews").document(rid).delete()
+
     def get_review(self, rid: str) -> dict | None:
         """The stored review, or None. Lets a repeat run reuse questions for free."""
         snap = self.db.collection("reviews").document(rid).get()
@@ -98,6 +160,49 @@ class Store:
         """
         snap = self.db.collection("students").document(student).get()
         return snap.to_dict() if snap.exists else {}
+
+    def flagged_reviews(self, class_id: str = "", milestone: str = "") -> list[dict]:
+        """Reviews where a prompt-injection attempt was detected in student code.
+
+        The channel that turns detection into something the lecturer can act on.
+        A single-field `injection_flagged` filter needs no composite index; the
+        class and milestone are narrowed in Python, cheap at pilot scale.
+        """
+        query = self.db.collection("reviews").where(
+            filter=FieldFilter("injection_flagged", "==", True)
+        )
+        rows = []
+        for snap in query.stream():
+            d = snap.to_dict() or {}
+            if class_id and d.get("class_id") != class_id:
+                continue
+            if milestone and d.get("milestone") != milestone:
+                continue
+            rows.append({
+                "student": d.get("student"),
+                "repo": d.get("repo"),
+                "pr": d.get("pr"),
+                "class_id": d.get("class_id"),
+                "milestone": d.get("milestone"),
+            })
+        return rows
+
+    def class_config(self, class_id: str) -> dict:
+        """Per-class review scope from the class doc: chapters, required symbols,
+        milestone. Any key the document does not set comes back as None, and the
+        caller falls back to the service-wide env default. This is what lets two
+        classes moving at different speeds be reviewed correctly without a
+        redeploy - the design's answer, wired up (Design.md).
+        """
+        if class_id == UNASSIGNED:
+            return {}
+        snap = self.db.collection("classes").document(class_id).get()
+        data = snap.to_dict() if snap.exists else {}
+        return {
+            "chapters": data.get("chapters"),
+            "required": data.get("required"),
+            "milestone": data.get("milestone"),
+        }
 
     def digest(self, class_id: str, milestone: str) -> list[dict]:
         """What this class got wrong, most widespread first."""
@@ -129,10 +234,23 @@ class Store:
         repo: str = "",
         pr: int = 0,
     ) -> None:
-        """Persist one review, and fold it into the student and class pictures."""
-        per_rule = Counter(f.rule for f in findings)
+        """Persist one review, and fold it into the student and class pictures.
 
-        self.db.collection("reviews").document(rid).set({
+        All the writes go in one `batch()`: the review, the student profile and
+        the class counters commit together or not at all. Three separate `set`s
+        could leave the review recorded - and so never retried, by design - while
+        a crash between them lost the profile and the class count, an undercount
+        that is permanent and invisible.
+        """
+        per_rule = Counter(f.rule for f in findings)
+        # The model reports a directive found in student code as an injection
+        # attempt (reviewer rule 4). Persist that it happened, so it is not lost
+        # the moment the comment is posted - a detection the lecturer never sees
+        # is not a control.
+        injections = sum(1 for q in questions if q.get("rule") == "prompt-injection-attempt")
+        batch = self.db.batch()
+
+        batch.set(self.db.collection("reviews").document(rid), {
             "student": student,
             "class_id": class_id,
             "milestone": milestone,
@@ -142,41 +260,46 @@ class Store:
             "model": model,
             "findings": [f.as_dict() for f in findings],
             "questions": questions,
+            "injection_flagged": injections > 0,
+            "status": "complete",
             "created_at": firestore.SERVER_TIMESTAMP,
         })
 
-        self.db.collection("students").document(student).set({
+        student_doc = {
             "class_id": class_id,
             "last_seen": firestore.SERVER_TIMESTAMP,
             "prs_reviewed": firestore.Increment(1),
             "recurring": {rule: firestore.Increment(n) for rule, n in per_rule.items()},
-        }, merge=True)
+        }
+        if injections:
+            student_doc["injection_attempts"] = firestore.Increment(injections)
+        batch.set(self.db.collection("students").document(student), student_doc, merge=True)
 
-        if class_id == UNASSIGNED:
-            return
-
-        self.db.collection("classes").document(class_id).set({
-            "class_id": class_id,
-            "updated_at": firestore.SERVER_TIMESTAMP,
-        }, merge=True)
-
-        # A clean submission has nothing to count. Writing `counts: {}` here would
-        # not merge into the running totals - Firestore takes an empty map as an
-        # explicit value and wipes them, so one careful student would erase the
-        # whole class digest.
-        if per_rule:
-            self._milestone_ref(class_id, milestone).set({
+        if class_id != UNASSIGNED:
+            batch.set(self.db.collection("classes").document(class_id), {
                 "class_id": class_id,
-                "milestone": milestone,
                 "updated_at": firestore.SERVER_TIMESTAMP,
-                "counts": {
-                    rule: {
-                        "occurrences": firestore.Increment(n),
-                        "students": firestore.ArrayUnion([student]),
-                    }
-                    for rule, n in per_rule.items()
-                },
             }, merge=True)
+
+            # A clean submission has nothing to count. Writing `counts: {}` here
+            # would not merge into the running totals - Firestore takes an empty
+            # map as an explicit value and wipes them, so one careful student
+            # would erase the whole class digest.
+            if per_rule:
+                batch.set(self._milestone_ref(class_id, milestone), {
+                    "class_id": class_id,
+                    "milestone": milestone,
+                    "updated_at": firestore.SERVER_TIMESTAMP,
+                    "counts": {
+                        rule: {
+                            "occurrences": firestore.Increment(n),
+                            "students": firestore.ArrayUnion([student]),
+                        }
+                        for rule, n in per_rule.items()
+                    },
+                }, merge=True)
+
+        batch.commit()
 
     # --- internal ------------------------------------------------------------
 

@@ -11,7 +11,7 @@ import uuid
 import pytest
 
 from co_lectr.layer1 import Finding
-from co_lectr.store import UNASSIGNED, Store, class_id_from, review_id
+from co_lectr.store import UNASSIGNED, Store, class_id_from, review_id, spec_id
 
 needs_firestore = pytest.mark.skipif(
     not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
@@ -29,6 +29,16 @@ def test_review_id_survives_a_slash_in_the_repo_name():
 
 def test_review_id_is_unique_per_commit():
     assert review_id("r", 1, "aaa") != review_id("r", 1, "bbb")
+
+
+def test_spec_id_changes_when_the_taught_chapters_change():
+    # A new chapter must produce a new review id, or a redelivered PR is skipped
+    # as "already reviewed" and never lands in the new milestone's digest.
+    assert spec_id("m1", ["run_agent"], ["ch1"]) != spec_id("m1", ["run_agent"], ["ch1", "ch2"])
+
+
+def test_spec_id_is_stable_regardless_of_input_order():
+    assert spec_id("m1", ["a", "b"], ["ch1", "ch2"]) == spec_id("m1", ["b", "a"], ["ch2", "ch1"])
 
 
 def write_class_file(tmp_path, text):
@@ -58,6 +68,25 @@ def test_an_id_firestore_would_reject_is_unassigned(tmp_path, text):
     assert class_id_from(write_class_file(tmp_path, text)) == UNASSIGNED
 
 
+def test_class_config_short_circuits_an_unassigned_submission():
+    # Unassigned needs no Firestore round-trip - and no credentials to test.
+    assert Store(db=None).class_config(UNASSIGNED) == {}
+
+
+@needs_firestore
+def test_class_config_reads_the_class_document(store_and_ids):
+    store, tag, created = store_and_ids
+    klass = f"{tag}_c"
+    created["classes"].append(klass)
+    store.db.collection("classes").document(klass).set({
+        "chapters": ["ch1", "ch2"], "required": ["run_agent"], "milestone": "ch2",
+    })
+    cfg = store.class_config(klass)
+    assert cfg["chapters"] == ["ch1", "ch2"]
+    assert cfg["required"] == ["run_agent"]
+    assert cfg["milestone"] == "ch2"
+
+
 @pytest.fixture
 def store_and_ids():
     from dotenv import load_dotenv
@@ -77,6 +106,21 @@ def store_and_ids():
         for m in ref.collection("milestones").stream():
             m.reference.delete()
         ref.delete()
+
+
+@needs_firestore
+def test_reserve_is_won_once_and_lost_the_second_time(store_and_ids):
+    # The lock against a duplicate review/comment: two deliveries with the same
+    # head sha both call reserve, exactly one wins.
+    store, tag, created = store_and_ids
+    rid, student = f"{tag}#1#aaa", f"{tag}_s0"
+    created["reviews"].append(rid)
+
+    assert store.reserve(rid, student=student, milestone="ch1") is True
+    assert store.reserve(rid, student=student, milestone="ch1") is False
+    # release hands the claim back so a redelivery can try again
+    store.release(rid)
+    assert store.reserve(rid, student=student, milestone="ch1") is True
 
 
 @needs_firestore
@@ -142,6 +186,27 @@ def test_unassigned_students_stay_out_of_every_class_digest(store_and_ids):
 
     assert store.profile(student)["prs_reviewed"] == 1     # still reviewed
     assert store.digest(UNASSIGNED, "ch1") == []           # but not counted
+
+
+@needs_firestore
+def test_an_injection_attempt_is_flagged_and_readable(store_and_ids):
+    # Detection has to reach the lecturer: the review is flagged, the student's
+    # count goes up, and flagged_reviews reads it back.
+    store, tag, created = store_and_ids
+    student, rid, klass = f"{tag}_inj", f"{tag}#1#inj", f"{tag}_c"
+    created["students"].append(student); created["reviews"].append(rid); created["classes"].append(klass)
+
+    store.record(
+        rid=rid, student=student, class_id=klass, milestone="ch1",
+        chapters_taught=[], findings=[finding("ruff:E722")],
+        questions=[{"path": "agent.py", "line": 1,
+                    "rule": "prompt-injection-attempt", "question": "a directive was here"}],
+        model="test", repo="org/repo", pr=3,
+    )
+
+    assert store.profile(student).get("injection_attempts") == 1
+    flagged = store.flagged_reviews(klass, "ch1")
+    assert any(r["student"] == student and r["pr"] == 3 for r in flagged)
 
 
 @needs_firestore

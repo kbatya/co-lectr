@@ -16,12 +16,13 @@ from co_lectr.github import GitHubClient
 
 
 class FakeResp:
-    def __init__(self, data=b""):
+    def __init__(self, data=b"", headers=None):
         self._data = data
+        self.headers = headers or {}
         self.captured = None
 
-    def read(self):
-        return self._data
+    def read(self, amt=None):
+        return self._data if amt is None else self._data[:amt]
 
     def __enter__(self):
         return self
@@ -70,6 +71,38 @@ def test_post_comment_sends_json_to_the_issue_endpoint(monkeypatch):
     assert seen["method"] == "POST"
     assert seen["body"] == {"body": "a question"}
     assert seen["auth"] == "Bearer tok"
+
+
+def test_fetch_source_rejects_an_oversized_content_length(monkeypatch, tmp_path):
+    monkeypatch.setattr(github, "urlopen", lambda req, *a, **k: FakeResp(
+        b"", headers={"Content-Length": str(github.MAX_COMPRESSED + 1)}))
+    with pytest.raises(RuntimeError, match="over the"):
+        GitHubClient("tok").fetch_source("kbatya/co-lectr", "abc123", tmp_path)
+
+
+def test_fetch_source_rejects_a_download_past_the_cap(monkeypatch, tmp_path):
+    # No Content-Length, so the actual bytes read must catch it.
+    monkeypatch.setattr(github, "MAX_COMPRESSED", 10)
+    tarball = make_tarball({"agent.py": "x = 1\n" * 50})
+    monkeypatch.setattr(github, "urlopen", lambda req, *a, **k: FakeResp(tarball))
+    with pytest.raises(RuntimeError, match="download limit"):
+        GitHubClient("tok").fetch_source("kbatya/co-lectr", "abc123", tmp_path)
+
+
+def test_fetch_source_rejects_too_many_members(monkeypatch, tmp_path):
+    monkeypatch.setattr(github, "MAX_MEMBERS", 1)
+    tarball = make_tarball({"a.py": "x\n", "b.py": "y\n"})
+    monkeypatch.setattr(github, "urlopen", lambda req, *a, **k: FakeResp(tarball))
+    with pytest.raises(RuntimeError, match="members"):
+        GitHubClient("tok").fetch_source("kbatya/co-lectr", "abc123", tmp_path)
+
+
+def test_fetch_source_rejects_an_oversized_expansion(monkeypatch, tmp_path):
+    monkeypatch.setattr(github, "MAX_EXTRACTED", 5)
+    tarball = make_tarball({"agent.py": "x = 1\n" * 20})
+    monkeypatch.setattr(github, "urlopen", lambda req, *a, **k: FakeResp(tarball))
+    with pytest.raises(RuntimeError, match="extracts to"):
+        GitHubClient("tok").fetch_source("kbatya/co-lectr", "abc123", tmp_path)
 
 
 def test_fetch_source_rejects_a_path_that_escapes_the_destination(monkeypatch, tmp_path):

@@ -7,7 +7,8 @@ from co_lectr.reviewer import INSTRUCTION as BATCH_INSTRUCTION
 def test_root_agent_exposes_its_tools():
     assert agent.root_agent.name == "co_lectr"
     assert [t.__name__ for t in agent.root_agent.tools] == [
-        "list_submissions", "run_checks", "read_file", "class_digest", "stored_class_digest",
+        "list_submissions", "run_checks", "read_file", "class_digest",
+        "stored_class_digest", "flagged_reviews",
     ]
 
 

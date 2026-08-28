@@ -1,0 +1,86 @@
+# Cloud Run service definition for the Co-Lectr webhook receiver.
+#
+# Checked in so the deployed configuration is reviewable in the repo rather than
+# living only in README command lines. It is the *target* config; the live pilot
+# is deployed with a source build (`gcloud run deploy co-lectr --source .`), which
+# preserves the env and secrets already on the service. To apply this file as the
+# source of truth instead:
+#
+#   gcloud run services replace service.yaml --region us-central1
+#
+# The three secret values are bound from Secret Manager - create them once with:
+#   printf '%s' "<value>" | gcloud secrets create gemini-api-key       --data-file=-
+#   printf '%s' "<value>" | gcloud secrets create github-token         --data-file=-
+#   printf '%s' "<value>" | gcloud secrets create github-webhook-secret --data-file=-
+# and grant the runtime service account roles/secretmanager.secretAccessor.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: co-lectr
+spec:
+  template:
+    metadata:
+      annotations:
+        # The review runs off the request thread after the 202 returns, so CPU
+        # must stay allocated instead of being throttled between requests.
+        run.googleapis.com/cpu-throttling: "false"
+    spec:
+      containerConcurrency: 8
+      containers:
+        - image: gcr.io/vgg16imp/co-lectr:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            # Persistence on: the class digest only accumulates if reviews are
+            # stored. Set to "0" to turn it off. Firestore uses the ambient
+            # service account - no key file in the container.
+            - name: COLECTR_FIRESTORE
+              value: "1"
+            # Running pytest executes student code beside these credentials, so
+            # it stays off until it runs in an isolated, credential-free job.
+            - name: COLECTR_RUN_TESTS
+              value: "0"
+            - name: COLECTR_MILESTONE
+              value: "pilot"
+            # Service-wide defaults. A class doc (classes/{id}) may override these
+            # per class; the delivery path reads it and falls back to here.
+            - name: COLECTR_CHAPTERS
+              value: "ch1 basics,ch2 functions and files"
+            - name: COLECTR_REQUIRE
+              value: "run_agent,load_config"
+            # Bounded in-process worker pool (the fallback path).
+            - name: COLECTR_MAX_INFLIGHT
+              value: "4"
+            # --- Durable worker (optional) -----------------------------------
+            # Set all three to push reviews onto Cloud Tasks instead of the pool:
+            # retries, a dead-letter queue and rate control come from the queue.
+            # Provision the queue first (gcloud tasks queues create), point the
+            # handler URL at this service's /tasks/review, and store the shared
+            # secret in Secret Manager. Left unset, the bounded pool is used.
+            # - name: COLECTR_TASKS_QUEUE
+            #   value: "projects/vgg16imp/locations/us-central1/queues/colectr-reviews"
+            # - name: COLECTR_TASKS_HANDLER_URL
+            #   value: "https://co-lectr-497101490342.us-central1.run.app/tasks/review"
+            # - name: COLECTR_TASKS_SECRET
+            #   valueFrom:
+            #     secretKeyRef: { name: colectr-tasks-secret, key: latest }
+            # -----------------------------------------------------------------
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gemini-api-key
+                  key: latest
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: latest
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: github-webhook-secret
+                  key: latest

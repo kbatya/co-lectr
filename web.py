@@ -24,12 +24,22 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
+
+# The in-process fallback worker pool. Bounded, so twelve students pushing before
+# a deadline is twelve reviews queued behind a few workers - each launching ruff
+# and maybe pytest subprocesses - not twelve unbounded threads at once. This path
+# is not durable: a scale-down still loses an in-flight review. COLECTR_TASKS_QUEUE
+# switches to Cloud Tasks, which is (see dispatch_review).
+_MAX_INFLIGHT = int(os.environ.get("COLECTR_MAX_INFLIGHT", "4"))
+_pool = ThreadPoolExecutor(max_workers=_MAX_INFLIGHT, thread_name_prefix="review")
 
 # The pull-request actions worth a review. A new PR, a push to its branch, or a
 # reopen all mean fresh head code; edits to the title, labels or reviewers do not.
@@ -43,6 +53,7 @@ class ReviewTarget:
     repo: str  # "owner/name"
     pr: int
     sha: str  # the PR head commit
+    student: str  # the PR author's GitHub login — the student, not the repo owner
 
 
 def signature_ok(body: bytes, header: str | None, secret: str) -> bool:
@@ -73,7 +84,12 @@ def review_target(payload: dict) -> ReviewTarget | None:
     if not isinstance(pr, dict) or not isinstance(repo, dict):
         return None
     try:
-        return ReviewTarget(repo=repo["full_name"], pr=pr["number"], sha=pr["head"]["sha"])
+        return ReviewTarget(
+            repo=repo["full_name"],
+            pr=pr["number"],
+            sha=pr["head"]["sha"],
+            student=pr["user"]["login"],
+        )
     except (KeyError, TypeError):
         return None
 
@@ -117,25 +133,96 @@ def webhook():
 
 
 def dispatch_review(target: ReviewTarget) -> None:
-    """Run the review off the request thread.
+    """Hand the review off the request thread.
 
-    The review core is imported lazily inside the worker so the health check and
-    cold start never pay for ADK, Gemini or Firestore — the endpoint stays cheap
-    to start, and only a real pull request pulls the heavy path in.
+    Two paths. If `COLECTR_TASKS_QUEUE` is set, the target is pushed onto Cloud
+    Tasks and processed by the `/tasks/review` handler below: retries, a
+    dead-letter queue and concurrency control come from the queue, so a review
+    survives a worker restart - the durable answer. Otherwise it runs on the
+    bounded in-process pool, which is simpler but loses an in-flight review on a
+    scale-down. Either way GitHub's ~10s delivery is not held open.
     """
-    import threading
-
-    def worker() -> None:
-        import asyncio
-
-        from co_lectr.pipeline import config_from_env, run_review
+    if os.environ.get("COLECTR_TASKS_QUEUE"):
         try:
-            asyncio.run(run_review(target, **config_from_env()))
+            _enqueue_task(target)
+            return
         except Exception:
-            app.logger.exception("review of %s PR#%s @ %s failed",
-                                 target.repo, target.pr, target.sha)
+            # If enqueue fails, fall back to the in-process pool rather than drop
+            # the review entirely.
+            app.logger.exception("enqueue failed for %s PR#%s; running in-process",
+                                 target.repo, target.pr)
+    _pool.submit(_run_review_blocking, target)
 
-    threading.Thread(target=worker, daemon=True).start()
+
+def _run_review_blocking(target: ReviewTarget) -> None:
+    """Run one review to completion. The review core is imported lazily so the
+    health check and cold start never pay for ADK, Gemini or Firestore."""
+    import asyncio
+
+    from co_lectr.pipeline import config_from_env, run_review
+    try:
+        asyncio.run(run_review(target, **config_from_env()))
+    except Exception:
+        app.logger.exception("review of %s PR#%s @ %s failed",
+                             target.repo, target.pr, target.sha)
+
+
+def _enqueue_task(target: ReviewTarget) -> None:
+    """Push one review onto Cloud Tasks, POSTing back to `/tasks/review`.
+
+    The handler authenticates the call with a shared secret (`COLECTR_TASKS_SECRET`)
+    so nothing but the queue can drive it. `google-cloud-tasks` is imported here,
+    not at module load, so the fallback path carries no dependency on it.
+    """
+    from google.cloud import tasks_v2
+
+    client = tasks_v2.CloudTasksClient()
+    task = {
+        "http_request": {
+            "http_method": tasks_v2.HttpMethod.POST,
+            "url": os.environ["COLECTR_TASKS_HANDLER_URL"],
+            "headers": {
+                "Content-Type": "application/json",
+                "X-Colectr-Task-Secret": os.environ["COLECTR_TASKS_SECRET"],
+            },
+            "body": json.dumps(asdict(target)).encode(),
+        }
+    }
+    client.create_task(parent=os.environ["COLECTR_TASKS_QUEUE"], task=task)
+
+
+@app.post("/tasks/review")
+def task_review():
+    """Cloud Tasks delivers a queued review here. A non-2xx makes the queue retry,
+    which is the whole point of the durable path."""
+    secret = os.environ.get("COLECTR_TASKS_SECRET", "")
+    got = request.headers.get("X-Colectr-Task-Secret", "")
+    if not secret or not hmac.compare_digest(got, secret):
+        return jsonify(error="unauthorized"), 401
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        target = ReviewTarget(
+            repo=payload["repo"], pr=payload["pr"],
+            sha=payload["sha"], student=payload["student"],
+        )
+    except (KeyError, TypeError):
+        return jsonify(error="bad task payload"), 400
+
+    try:
+        _run_review_blocking_raise(target)
+    except Exception:
+        app.logger.exception("queued review of %s PR#%s failed", target.repo, target.pr)
+        return jsonify(error="review failed"), 500  # non-2xx → Cloud Tasks retries
+    return jsonify(ok=True), 200
+
+
+def _run_review_blocking_raise(target: ReviewTarget) -> None:
+    """Run one review, letting exceptions propagate so the queue can retry."""
+    import asyncio
+
+    from co_lectr.pipeline import config_from_env, run_review
+    asyncio.run(run_review(target, **config_from_env()))
 
 
 if __name__ == "__main__":

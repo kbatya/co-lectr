@@ -31,7 +31,7 @@ class FakeStore:
 
 
 def test_digests_are_per_class(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["co-lectr", str(SAMPLES), "--no-tests", "--no-store"])
+    monkeypatch.setattr(sys, "argv", ["co-lectr", str(SAMPLES), "--no-store"])
     cli.main()
     out = capsys.readouterr().out
 
@@ -54,7 +54,7 @@ def test_the_students_profile_reaches_the_reviewer(monkeypatch, capsys):
         return []
 
     monkeypatch.setattr(cli, "review_with_backoff", fake_review)
-    monkeypatch.setattr(sys, "argv", ["co-lectr", str(SAMPLES), "--no-tests", "--review", "--pace", "0"])
+    monkeypatch.setattr(sys, "argv", ["co-lectr", str(SAMPLES), "--review", "--pace", "0"])
     cli.main()
 
     assert seen["student_01"] == {"ruff:E722": 3, "ruff:F401": 1}
@@ -69,5 +69,5 @@ def test_an_unchanged_submission_costs_no_profile_read(monkeypatch):
     monkeypatch.setattr(store, "get_review", lambda rid: {"questions": []})
     monkeypatch.setattr(store, "profile", lambda student: pytest.fail("profile read on a cached review"))
     monkeypatch.setattr(cli, "open_store", lambda: store)
-    monkeypatch.setattr(sys, "argv", ["co-lectr", str(SAMPLES), "--no-tests", "--review", "--pace", "0"])
+    monkeypatch.setattr(sys, "argv", ["co-lectr", str(SAMPLES), "--review", "--pace", "0"])
     cli.main()

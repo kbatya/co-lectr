@@ -23,6 +23,14 @@ from urllib.request import Request, urlopen
 
 API = "https://api.github.com"
 
+# The tarball is attacker-chosen input: a student controls their own repo. The
+# `data` filter blocks path escape, but not size — so a large or highly
+# compressible archive could exhaust the Cloud Run instance's memory mid-review.
+# These caps bound the download, the expansion and the member count.
+MAX_COMPRESSED = 25 * 1024 * 1024   # 25 MB downloaded
+MAX_EXTRACTED = 100 * 1024 * 1024   # 100 MB written to disk
+MAX_MEMBERS = 5000                  # files in the archive
+
 
 @dataclass
 class GitHubClient:
@@ -44,8 +52,21 @@ class GitHubClient:
         """
         url = f"{self.api}/repos/{repo}/tarball/{sha}"
         with self._open(Request(url)) as resp:
-            raw = resp.read()
+            declared = resp.headers.get("Content-Length")
+            if declared is not None and int(declared) > MAX_COMPRESSED:
+                raise RuntimeError(f"tarball is {declared} bytes, over the {MAX_COMPRESSED} limit")
+            # Read one byte past the cap so a missing or lying Content-Length is
+            # still caught by the actual size.
+            raw = resp.read(MAX_COMPRESSED + 1)
+        if len(raw) > MAX_COMPRESSED:
+            raise RuntimeError(f"tarball exceeds the {MAX_COMPRESSED}-byte download limit")
         with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
+            members = tar.getmembers()
+            if len(members) > MAX_MEMBERS:
+                raise RuntimeError(f"tarball has {len(members)} members, over the {MAX_MEMBERS} limit")
+            total = sum(m.size for m in members)
+            if total > MAX_EXTRACTED:
+                raise RuntimeError(f"tarball extracts to {total} bytes, over the {MAX_EXTRACTED} limit")
             tar.extractall(dest, filter="data")
         roots = [p for p in Path(dest).iterdir() if p.is_dir()]
         if len(roots) != 1:

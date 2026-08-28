@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
-import json
 import os
 import time
 from pathlib import Path
@@ -22,7 +21,7 @@ from pathlib import Path
 from .aggregator import digest, render
 from .layer1 import analyse, python_files
 from .reviewer import MODEL, repeat_rules
-from .store import CLASS_FILE, UNASSIGNED, Store, class_id_from, review_id
+from .store import CLASS_FILE, UNASSIGNED, Store, class_id_from, review_id, spec_id
 
 
 def fingerprint(root: Path) -> str:
@@ -36,18 +35,6 @@ def fingerprint(root: Path) -> str:
         h.update(str(path.relative_to(root)).replace("\\", "/").encode())
         h.update(path.read_bytes())
     return h.hexdigest()[:12]
-
-
-def spec_id(milestone: str, require: list[str], chapters: list[str]) -> str:
-    """Hash of the assignment inputs that decide what a review is allowed to say.
-
-    Half of the review id, alongside the code hash. Unchanged code still has to
-    be reviewed again once the milestone moves or another chapter is taught:
-    otherwise the run replays questions scoped to last week's syllabus, and
-    writes nothing into the new milestone's class digest.
-    """
-    payload = json.dumps([milestone, sorted(require), sorted(chapters)])
-    return hashlib.sha256(payload.encode()).hexdigest()[:8]
 
 
 def open_store() -> Store | None:
@@ -78,7 +65,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="co-lectr")
     parser.add_argument("root", type=Path, help="folder holding one directory per student")
     parser.add_argument("--require", nargs="*", default=[], help="symbols the assignment spec asks for")
-    parser.add_argument("--no-tests", action="store_true", help="skip pytest (does not execute student code)")
+    parser.add_argument("--run-tests", action="store_true",
+                        help="run pytest, which EXECUTES the submission's own test code (off by default)")
     parser.add_argument("--review", action="store_true", help="also run layer 2 (needs GOOGLE_API_KEY)")
     parser.add_argument("--chapter", nargs="*", default=[], help="chapters taught so far, scoping what may be raised")
     parser.add_argument("--milestone", default="local", help="which chapter milestone this run belongs to")
@@ -97,7 +85,7 @@ def main() -> None:
     for submission in submissions:
         try:
             results[submission.name] = analyse(
-                submission, required_symbols=tuple(args.require), run_tests=not args.no_tests)
+                submission, required_symbols=tuple(args.require), run_tests=args.run_tests)
         except Exception as exc:  # a hung pytest, a ruff that would not start
             # One submission must not cost the rest of the class their review.
             # Left out of `results` rather than counted as clean: no findings is
