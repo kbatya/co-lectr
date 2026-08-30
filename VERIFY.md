@@ -10,7 +10,7 @@ and the whole test suite need no credentials; layer 2, Firestore and deploy each
 
 | Step | Needs credentials? |
 |---|---|
-| Install + run the tests (110 pass, 8 skip without a Firestore key) | No |
+| Install + run the tests (149 pass, 13 skip without a Firestore key) | No |
 | Layer 1 over the samples (facts, the class digest) | No |
 | Layer 2 — the questions (`--review`, `adk web`) | A Gemini API key |
 | Firestore — persistence, the stored class digest | A service-account key |
@@ -43,7 +43,7 @@ pip install -r co_lectr/requirements.txt
 python -m pytest co_lectr/tests -q
 ```
 
-Expect **110 passed, 8 skipped** — the 8 skips are the Firestore integration tests, which need a
+Expect **149 passed, 13 skipped** — the 13 skips are the Firestore integration tests, which need a
 service-account key. The tests are offline: the network and the model are faked, so this passes on any
 machine with no keys and no internet access to Google.
 
@@ -81,6 +81,11 @@ GOOGLE_CLOUD_PROJECT=<your project id>
 ```bash
 adk web        # pick co_lectr; ask "review student_04", "what did 12-A get wrong?"
 ```
+
+Project themes live here too: ask *"which project themes are waiting for approval?"* (`pending_themes`),
+then *"approve student_04's theme"* (`approve_theme`) or *"reject it"* (`reject_theme`). A pending theme is
+created when a student's PR carries a `.colectr/project.yml`; with a `GITHUB_TOKEN` in the environment, the
+approve/reject decision is posted back to that PR.
 
 ## 7. Deploy (needs gcloud + a GCP project)
 

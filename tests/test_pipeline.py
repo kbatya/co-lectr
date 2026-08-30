@@ -10,9 +10,13 @@ from pathlib import Path
 
 from co_lectr import pipeline
 from co_lectr.pipeline import format_comment, run_review
+from co_lectr.store import theme_slug
 from co_lectr.web import ReviewTarget
 
 TARGET = ReviewTarget(repo="kbatya/co-lectr", pr=7, sha="deadbeef", student="ada-lovelace")
+
+CHESS = theme_slug("A chess engine")
+GO = theme_slug("A go engine")
 
 
 class FakeClient:
@@ -232,3 +236,273 @@ def test_run_review_uses_per_class_config_over_the_env_defaults(monkeypatch):
     assert seen["required"] == ("solve",)
     assert seen["milestone"] == "ch9"
     assert seen["recorded_milestone"] == "ch9"
+
+
+# --- the project theme gate -------------------------------------------------
+
+class ThemeClient:
+    """Like FakeClient, but writes the nested `.colectr/project.yml`."""
+
+    def __init__(self, theme):
+        self.theme = theme
+        self.posted = []
+
+    def fetch_source(self, repo, sha, dest):
+        root = Path(dest) / "repo-root"
+        (root / ".colectr").mkdir(parents=True)
+        (root / ".colectr" / "project.yml").write_text(
+            f"theme: {self.theme}\nspec: a spec\n", encoding="utf-8")
+        (root / "agent.py").write_text("x = 1\n", encoding="utf-8")
+        return root
+
+    def post_comment(self, repo, pr, body):
+        self.posted.append((repo, pr, body))
+
+
+class ThemeStore:
+    """An in-memory stand-in for the theme registry, keyed by slug like Firestore.
+
+    profile() drives the gate: a student is past it once their profile carries
+    theme_status == "approved" (approve_theme would have written it).
+    """
+
+    def __init__(self, themes=None, profiles=None):
+        self.themes = {t["slug"]: dict(t) for t in (themes or [])}  # slug -> doc
+        self.profiles = profiles or {}   # student -> profile dict
+        self.reserved = []
+        self.released = []
+
+    def profile(self, student):
+        return self.profiles.get(student, {})
+
+    def has_approved_theme(self, student):
+        return self.profile(student).get("theme_status") == "approved"
+
+    def get_theme(self, class_id, slug):
+        return self.themes.get(slug)
+
+    def list_themes(self, class_id, status=""):
+        return [t for t in self.themes.values() if not status or t.get("status") == status]
+
+    def reserve_theme(self, class_id, slug, *, student, theme, spec, repo="", pr=0):
+        if slug in self.themes:
+            return False
+        self.themes[slug] = {"slug": slug, "student": student, "theme": theme,
+                             "spec": spec, "status": "pending", "repo": repo, "pr": pr}
+        self.reserved.append((slug, student, theme))
+        return True
+
+    def release_theme(self, class_id, slug):
+        self.themes.pop(slug, None)
+        self.released.append(slug)
+
+
+def _no_conflict(monkeypatch):
+    async def clear(theme, spec, existing, model=""):
+        return None
+    monkeypatch.setattr(pipeline, "theme_conflict", clear)
+
+
+def test_a_unique_proposal_is_reserved_and_skips_code_review(monkeypatch):
+    monkeypatch.setattr(pipeline, "class_id_from", lambda root: "12a")
+    _no_conflict(monkeypatch)
+    client = ThemeClient("A chess engine")
+    store = ThemeStore()
+
+    questions = asyncio.run(run_review(TARGET, client=client, chapters=["ch1"], required=[], store=store))
+
+    assert questions == []
+    assert store.reserved and store.reserved[0][2] == "A chess engine"
+    assert len(client.posted) == 1
+    assert "reserved" in client.posted[0][2].lower()
+
+
+def test_a_conflicting_theme_is_turned_back_and_not_reserved(monkeypatch):
+    monkeypatch.setattr(pipeline, "class_id_from", lambda root: "12a")
+
+    async def clash(theme, spec, existing, model=""):
+        return {"slug": "chess-engine", "theme": "A chess engine", "reason": "both chess AIs"}
+    monkeypatch.setattr(pipeline, "theme_conflict", clash)
+
+    client = ThemeClient("chess-playing AI")
+    store = ThemeStore(themes=[{"slug": "chess-engine", "theme": "A chess engine",
+                                "student": "someone", "status": "pending"}])
+
+    asyncio.run(run_review(TARGET, client=client, chapters=[], required=[], store=store))
+
+    assert store.reserved == []
+    assert "too close" in client.posted[0][2].lower()
+    assert "A chess engine" in client.posted[0][2]
+
+
+def test_the_same_theme_by_another_student_is_taken_without_a_model_call(monkeypatch):
+    monkeypatch.setattr(pipeline, "class_id_from", lambda root: "12a")
+
+    async def boom(theme, spec, existing, model=""):
+        raise AssertionError("the conflict check must not run on an exact-slug clash")
+    monkeypatch.setattr(pipeline, "theme_conflict", boom)
+
+    client = ThemeClient("A chess engine")
+    store = ThemeStore(themes=[{"slug": CHESS, "student": "someone-else",
+                                "theme": "A chess engine", "status": "pending"}])
+
+    asyncio.run(run_review(TARGET, client=client, chapters=[], required=[], store=store))
+
+    assert store.reserved == []
+    assert "already claimed this exact theme" in client.posted[0][2]
+
+
+def test_a_students_own_pending_theme_is_acknowledged_without_a_repeat_comment(monkeypatch):
+    # A re-push while the theme is pending (same slug) must not spam the PR.
+    monkeypatch.setattr(pipeline, "class_id_from", lambda root: "12a")
+    client = ThemeClient("A chess engine")
+    store = ThemeStore(themes=[{"slug": CHESS, "student": TARGET.student,
+                                "theme": "A chess engine", "status": "pending"}])
+
+    questions = asyncio.run(run_review(TARGET, client=client, chapters=[], required=[], store=store))
+
+    assert questions == []
+    assert client.posted == []
+    assert store.reserved == []
+
+
+def test_revising_a_pending_theme_reserves_the_new_slug_then_releases_the_old(monkeypatch):
+    # G2 + #1: editing project.yml to a new theme reserves the new slug FIRST, then
+    # frees the old one — so the old slug ends up gone and a classmate is unblocked.
+    monkeypatch.setattr(pipeline, "class_id_from", lambda root: "12a")
+    _no_conflict(monkeypatch)
+    client = ThemeClient("A go engine")  # revised from the chess one below
+    store = ThemeStore(themes=[{"slug": CHESS, "student": TARGET.student,
+                                "theme": "A chess engine", "status": "pending"}])
+
+    asyncio.run(run_review(TARGET, client=client, chapters=[], required=[], store=store))
+
+    assert store.released == [CHESS]                     # the old proposal is gone
+    assert store.reserved and store.reserved[0][0] == GO
+    assert CHESS not in store.themes                     # slug freed for classmates
+    assert "reserved" in client.posted[0][2].lower()
+
+
+def test_a_failed_revision_does_not_destroy_the_prior_reservation(monkeypatch):
+    # #1: if the new slug is lost to a classmate's race, the student's existing
+    # pending theme must be left intact — never released before the reserve wins.
+    monkeypatch.setattr(pipeline, "class_id_from", lambda root: "12a")
+    _no_conflict(monkeypatch)
+    client = ThemeClient("A go engine")
+
+    class RaceLostStore(ThemeStore):
+        def reserve_theme(self, class_id, slug, *, student, theme, spec, repo="", pr=0):
+            # A classmate got GO first; the whole point is A must survive this.
+            self.themes[slug] = {"slug": slug, "student": "someone-else", "status": "pending"}
+            return False
+
+    store = RaceLostStore(themes=[{"slug": CHESS, "student": TARGET.student,
+                                   "theme": "A chess engine", "status": "pending"}])
+    asyncio.run(run_review(TARGET, client=client, chapters=[], required=[], store=store))
+
+    assert store.released == []          # the old reservation was NOT released
+    assert CHESS in store.themes         # student A still holds their chess theme
+    assert "already claimed this exact theme" in client.posted[0][2]
+
+
+def test_a_previously_rejected_theme_is_turned_back_not_re_reserved(monkeypatch):
+    # #3: a rejected theme is recorded on the profile; re-pushing the same words is
+    # refused rather than put back in the lecturer's queue.
+    monkeypatch.setattr(pipeline, "class_id_from", lambda root: "12a")
+
+    async def boom(theme, spec, existing, model=""):
+        raise AssertionError("a rejected theme must not reach the model check")
+    monkeypatch.setattr(pipeline, "theme_conflict", boom)
+
+    client = ThemeClient("A chess engine")
+    store = ThemeStore(profiles={TARGET.student: {"rejected_themes": [CHESS]}})
+
+    asyncio.run(run_review(TARGET, client=client, chapters=[], required=[], store=store))
+
+    assert store.reserved == []
+    assert "turned this theme down" in client.posted[0][2].lower()
+
+
+def test_own_concurrent_delivery_losing_the_reserve_race_stays_silent(monkeypatch):
+    # G4: if the winner of the exact-slug race is this student's own concurrent
+    # delivery, the loser must not post "a classmate claimed it".
+    monkeypatch.setattr(pipeline, "class_id_from", lambda root: "12a")
+    _no_conflict(monkeypatch)
+    client = ThemeClient("A chess engine")
+
+    class RacingStore(ThemeStore):
+        def reserve_theme(self, class_id, slug, *, student, theme, spec, repo="", pr=0):
+            # Simulate a concurrent delivery by the same student winning first.
+            self.themes[slug] = {"slug": slug, "student": student, "theme": theme,
+                                 "status": "pending"}
+            return False
+
+    store = RacingStore()
+    questions = asyncio.run(run_review(TARGET, client=client, chapters=[], required=[], store=store))
+
+    assert questions == []
+    assert client.posted == []  # silent — it is our own claim, not a clash
+
+
+def test_an_approved_student_is_reviewed_not_gated(monkeypatch):
+    # Once the theme is approved the project.yml stays in the repo but is past the
+    # gate: the PR is reviewed as code, not handled as a proposal.
+    monkeypatch.setattr(pipeline, "class_id_from", lambda root: "12a")
+    monkeypatch.setattr(pipeline, "analyse", lambda root, required_symbols=(), run_tests=False: [])
+
+    async def fake_review(root, findings, chapters, recurring):
+        return [{"path": "agent.py", "line": 1, "rule": "", "question": "why?"}]
+    monkeypatch.setattr(pipeline, "review", fake_review)
+
+    client = ThemeClient("A chess engine")  # matches the approved theme
+
+    class ApprovedStore(ThemeStore):
+        def class_config(self, class_id):
+            return {}
+
+        def reserve(self, rid, *, student, milestone):
+            return True
+
+        def record(self, **kw):
+            pass
+
+    store = ApprovedStore(profiles={TARGET.student: {
+        "theme_status": "approved", "theme_slug": CHESS, "theme": "A chess engine"}})
+    asyncio.run(run_review(TARGET, client=client, chapters=["ch1"], required=[], store=store))
+
+    # A review comment (a question), not a theme comment, and no change notice.
+    assert len(client.posted) == 1
+    assert "why?" in client.posted[0][2]
+    assert "Heads up" not in client.posted[0][2]
+
+
+def test_an_approved_student_who_changed_their_theme_is_told_in_the_review(monkeypatch):
+    # G3: an approved student whose project.yml now names a different theme is told
+    # the change is ignored — folded into the review, not a second comment.
+    monkeypatch.setattr(pipeline, "class_id_from", lambda root: "12a")
+    monkeypatch.setattr(pipeline, "analyse", lambda root, required_symbols=(), run_tests=False: [])
+
+    async def fake_review(root, findings, chapters, recurring):
+        return [{"path": "agent.py", "line": 1, "rule": "", "question": "why?"}]
+    monkeypatch.setattr(pipeline, "review", fake_review)
+
+    client = ThemeClient("A go engine")  # differs from the approved chess theme
+
+    class ApprovedStore(ThemeStore):
+        def class_config(self, class_id):
+            return {}
+
+        def reserve(self, rid, *, student, milestone):
+            return True
+
+        def record(self, **kw):
+            pass
+
+    store = ApprovedStore(profiles={TARGET.student: {
+        "theme_status": "approved", "theme_slug": CHESS, "theme": "A chess engine"}})
+    asyncio.run(run_review(TARGET, client=client, chapters=["ch1"], required=[], store=store))
+
+    assert len(client.posted) == 1  # one comment, both notice and questions
+    body = client.posted[0][2]
+    assert "Heads up" in body and "A chess engine" in body
+    assert "why?" in body

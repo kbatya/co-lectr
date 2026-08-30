@@ -1,10 +1,11 @@
 """Firestore persistence for Co-Lectr.
 
-Three collections, as documented in Design.md:
+Collections, as documented in Design.md:
 
     reviews/{repo}#{pr}#{sha}                 one review: findings and questions
     students/{login}                          the misconception profile, accumulating
     classes/{class}/milestones/{milestone}    what that class got wrong, counted
+    classes/{class}/themes/{slug}             a claimed project theme, one per student
 
 Two deliberate limits on what is stored:
 
@@ -98,12 +99,32 @@ def spec_id(milestone: str, require: list[str], chapters: list[str]) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:8]
 
 
+def theme_slug(theme: str) -> str:
+    """A project theme, hashed into a stable Firestore document id.
+
+    The slug is only the atomic lock against two students claiming the *same
+    words*. It folds case and whitespace — `A Chess Engine` and `a  chess engine`
+    are one theme — then hashes, so identical text lands on one id and `create()`
+    lets exactly one of them through. It deliberately does NOT fold punctuation:
+    `C++ parser` and `C parser` are different themes and must get different ids,
+    not collide into one and have the second wrongly refused as an exact
+    duplicate. Themes that are the same *idea* in different words are a separate
+    question, answered by the model in themes.py — this is just the cheap, exact
+    half. A theme with no letters or digits is not real content; it returns ""
+    and the caller treats it as unreadable.
+    """
+    normalized = " ".join((theme or "").lower().split())
+    if not re.search(r"[a-z0-9]", normalized):
+        return ""
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
+
+
 @dataclass
 class Store:
     db: firestore.Client
 
     @classmethod
-    def open(cls) -> "Store":
+    def open(cls) -> Store:
         """Credentials come from GOOGLE_APPLICATION_CREDENTIALS."""
         return cls(firestore.Client())
 
@@ -145,6 +166,34 @@ class Store:
         same commit can try again instead of being locked out by the placeholder.
         Only called when the work failed before the comment went out."""
         self.db.collection("reviews").document(rid).delete()
+
+    def reserve_theme(
+        self, class_id: str, slug: str, *,
+        student: str, theme: str, spec: str, repo: str = "", pr: int = 0,
+    ) -> bool:
+        """Claim a project theme's slug atomically. True if won, False if taken.
+
+        The same `create()` lock the review reservation uses: two students who
+        submit the identical theme at the same moment both try to create the one
+        `themes/{slug}` document, and exactly one wins. The reworded-but-same case
+        is not this method's job — the conflict check runs first and only a theme
+        that survived it reaches here. Held `pending` until the lecturer approves.
+        """
+        try:
+            self._theme_ref(class_id, slug).create({
+                "slug": slug,
+                "theme": theme,
+                "spec": spec,
+                "student": student,
+                "class_id": class_id,
+                "status": "pending",
+                "repo": repo,
+                "pr": pr,
+                "created_at": firestore.SERVER_TIMESTAMP,
+            })
+            return True
+        except AlreadyExists:
+            return False
 
     def get_review(self, rid: str) -> dict | None:
         """The stored review, or None. Lets a repeat run reuse questions for free."""
@@ -203,6 +252,37 @@ class Store:
             "required": data.get("required"),
             "milestone": data.get("milestone"),
         }
+
+    def has_approved_theme(self, student: str) -> bool:
+        """True once this student's project theme is approved.
+
+        The gate the delivery path reads: while it is False a PR carrying a theme
+        proposal is handled as a proposal; once True the student is past the gate
+        and their pushes are reviewed as code.
+        """
+        return self.profile(student).get("theme_status") == "approved"
+
+    def get_theme(self, class_id: str, slug: str) -> dict | None:
+        """One claimed theme by its slug, or None if the slug is free."""
+        snap = self._theme_ref(class_id, slug).get()
+        return snap.to_dict() if snap.exists else None
+
+    def list_themes(self, class_id: str, status: str = "") -> list[dict]:
+        """The themes claimed in a class, optionally only those in one status.
+
+        Read by the conflict check (to compare a new theme against the claimed
+        ones) and by the lecturer's pending-themes tool. The status filter is
+        applied in Python — at a class's scale a handful of docs, no index.
+        """
+        if class_id == UNASSIGNED:
+            return []
+        rows = []
+        for snap in self._themes_col(class_id).stream():
+            data = snap.to_dict() or {}
+            if status and data.get("status") != status:
+                continue
+            rows.append(data)
+        return rows
 
     def digest(self, class_id: str, milestone: str) -> list[dict]:
         """What this class got wrong, most widespread first."""
@@ -301,6 +381,76 @@ class Store:
 
         batch.commit()
 
+    def approve_theme(self, class_id: str, slug: str) -> dict:
+        """Approve a pending theme and record it to its student. Returns the
+        theme, or {} if the slug is not claimed.
+
+        The theme doc flips to `approved`, and the same batch writes the theme
+        onto the student's profile — one commit, so the student is never marked
+        as owning a theme the class registry does not show as approved. This is
+        the lecturer's step: the automatic check at proposal time only kept the
+        slug free; a person still decides the project is one to run.
+        """
+        ref = self._theme_ref(class_id, slug)
+        snap = ref.get()
+        if not snap.exists:
+            return {}
+        data = snap.to_dict() or {}
+        student = data.get("student", "")
+        batch = self.db.batch()
+        batch.set(ref, {
+            "status": "approved",
+            "approved_at": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+        if student and student != UNASSIGNED:
+            batch.set(self.db.collection("students").document(student), {
+                "class_id": class_id,
+                "theme": data.get("theme", ""),
+                "theme_slug": slug,
+                "theme_status": "approved",
+            }, merge=True)
+        batch.commit()
+        return {**data, "status": "approved"}
+
+    def release_theme(self, class_id: str, slug: str) -> None:
+        """Drop a student's own pending theme so they can claim a different one.
+
+        The revision path's counterpart to `release` for reviews: when a student
+        edits `.colectr/project.yml` to a new theme while the old one is still
+        pending, the old slug is freed here before the new one is reserved, so a
+        student never holds two pending themes and the abandoned slug does not
+        block a classmate. Unlike `reject_theme` this is the student's own doing,
+        not the lecturer's, so it returns nothing to post back.
+        """
+        self._theme_ref(class_id, slug).delete()
+
+    def reject_theme(self, class_id: str, slug: str) -> dict:
+        """Reject a pending theme. Returns the theme, or {}.
+
+        The slug doc is deleted so the theme does not sit there blocking a
+        classmate — a rejection bars *this* student from the theme, not everyone.
+        The bar is recorded on the student's own profile (`rejected_themes`), so
+        re-pushing the identical `project.yml` does not simply re-reserve it and
+        put a decided theme back in the lecturer's queue: the propose path checks
+        this list and turns a rejected theme back. The student is free to propose
+        a genuinely different one. Reject only touches pending themes — an
+        approved theme is already recorded on the profile.
+        """
+        ref = self._theme_ref(class_id, slug)
+        snap = ref.get()
+        if not snap.exists:
+            return {}
+        data = snap.to_dict() or {}
+        student = data.get("student", "")
+        batch = self.db.batch()
+        batch.delete(ref)
+        if student and student != UNASSIGNED:
+            batch.set(self.db.collection("students").document(student), {
+                "rejected_themes": firestore.ArrayUnion([slug]),
+            }, merge=True)
+        batch.commit()
+        return data
+
     # --- internal ------------------------------------------------------------
 
     def _milestone_ref(self, class_id: str, milestone: str):
@@ -308,3 +458,9 @@ class Store:
             self.db.collection("classes").document(class_id)
             .collection("milestones").document(milestone)
         )
+
+    def _themes_col(self, class_id: str):
+        return self.db.collection("classes").document(class_id).collection("themes")
+
+    def _theme_ref(self, class_id: str, slug: str):
+        return self._themes_col(class_id).document(slug)

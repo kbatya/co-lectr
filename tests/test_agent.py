@@ -9,6 +9,7 @@ def test_root_agent_exposes_its_tools():
     assert [t.__name__ for t in agent.root_agent.tools] == [
         "list_submissions", "run_checks", "read_file", "class_digest",
         "stored_class_digest", "flagged_reviews",
+        "pending_themes", "approve_theme", "reject_theme",
     ]
 
 
@@ -69,3 +70,126 @@ def test_stored_class_digest_reads_the_class_counts_from_the_store(monkeypatch):
     assert result["class_id"] == "12a"
     assert result["rows"][0]["rule"] == "ruff:E722"
     assert result["rows"][0]["students"] == ["noa", "milad"]
+
+
+# --- theme approval tools ---------------------------------------------------
+
+class _ThemeStore:
+    """A store standing in for Firestore's theme registry in the tool tests."""
+
+    def __init__(self, themes):
+        self.themes = themes        # list of theme docs (any status)
+        self.approved = []
+        self.rejected = []
+
+    @classmethod
+    def open(cls):
+        return cls._instance
+
+    def list_themes(self, class_id, status=""):
+        return [t for t in self.themes if not status or t.get("status") == status]
+
+    def approve_theme(self, class_id, slug):
+        self.approved.append(slug)
+        return next((t for t in self.themes if t["slug"] == slug), {})
+
+    def reject_theme(self, class_id, slug):
+        self.rejected.append(slug)
+        return next((t for t in self.themes if t["slug"] == slug), {})
+
+
+def _wire_theme_store(monkeypatch, themes):
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "key.json")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)  # no PR notification in unit tests
+    store = _ThemeStore(themes)
+    _ThemeStore._instance = store
+    monkeypatch.setattr(agent, "Store", _ThemeStore)
+    return store
+
+
+def _no_theme_clash(monkeypatch):
+    async def clear(theme, spec, existing, model=""):
+        return None
+    monkeypatch.setattr(agent, "theme_conflict", clear)
+
+
+def test_theme_tools_need_firestore_credentials(monkeypatch):
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    assert "error" in agent.pending_themes("12a")
+    assert "error" in agent.approve_theme("12a", "ada")
+    assert "error" in agent.reject_theme("12a", "ada")
+
+
+def test_pending_themes_lists_what_is_waiting(monkeypatch):
+    _wire_theme_store(monkeypatch, [
+        {"slug": "chess", "theme": "A chess engine", "spec": "minimax", "student": "ada", "pr": 3,
+         "status": "pending"},
+    ])
+    pending = agent.pending_themes("12a")["pending"]
+    assert pending[0]["student"] == "ada" and pending[0]["theme"] == "A chess engine"
+    assert "slug" not in pending[0]  # the lecturer sees the theme, not the internal id
+
+
+def test_approve_theme_resolves_the_student_to_their_slug(monkeypatch):
+    _no_theme_clash(monkeypatch)
+    store = _wire_theme_store(monkeypatch, [
+        {"slug": "chess", "theme": "A chess engine", "student": "ada", "status": "pending"},
+    ])
+    result = agent.approve_theme("12a", "ada")
+    assert result == {"approved": "A chess engine", "student": "ada", "notified": False}
+    assert store.approved == ["chess"]
+
+
+def test_approve_theme_refuses_a_duplicate_of_an_approved_project(monkeypatch):
+    # G5 backstop: two look-alikes both reached pending; the second must not be
+    # approved once the first is approved.
+    async def clash(theme, spec, existing, model=""):
+        return {"slug": "chess", "theme": "A chess engine", "reason": "same project"}
+    monkeypatch.setattr(agent, "theme_conflict", clash)
+    store = _wire_theme_store(monkeypatch, [
+        {"slug": "chess-ai", "theme": "chess-playing AI", "student": "bob", "status": "pending"},
+        {"slug": "chess", "theme": "A chess engine", "student": "ada", "status": "approved"},
+    ])
+    result = agent.approve_theme("12a", "bob")
+    assert "error" in result and "duplicates" in result["error"]
+    assert store.approved == []  # nothing was approved
+
+
+def test_reject_theme_resolves_the_student_to_their_slug(monkeypatch):
+    store = _wire_theme_store(monkeypatch, [
+        {"slug": "chess", "theme": "A chess engine", "student": "ada", "status": "pending"},
+    ])
+    result = agent.reject_theme("12a", "ada")
+    assert result == {"rejected": "A chess engine", "student": "ada", "notified": False}
+    assert store.rejected == ["chess"]
+
+
+def test_approve_and_reject_notify_the_students_pr_when_a_token_is_set(monkeypatch):
+    # G1: the loop closes on the student's PR. With a token, a comment goes out to
+    # the repo+PR the theme was proposed on.
+    _no_theme_clash(monkeypatch)
+    _wire_theme_store(monkeypatch, [
+        {"slug": "chess", "theme": "A chess engine", "student": "ada", "status": "pending",
+         "repo": "org/ada-repo", "pr": 4},
+    ])
+    monkeypatch.setenv("GITHUB_TOKEN", "t0ken")
+    posted = []
+
+    class FakeGH:
+        def __init__(self, token):
+            pass
+
+        def post_comment(self, repo, pr, body):
+            posted.append((repo, pr, body))
+
+    monkeypatch.setattr(agent, "GitHubClient", FakeGH)
+
+    result = agent.approve_theme("12a", "ada")
+    assert result["notified"] is True
+    assert posted[0][0] == "org/ada-repo" and posted[0][1] == 4
+    assert "approved" in posted[0][2].lower()
+
+
+def test_approve_theme_errors_when_the_student_has_nothing_pending(monkeypatch):
+    _wire_theme_store(monkeypatch, [])
+    assert "error" in agent.approve_theme("12a", "nobody")

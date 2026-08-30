@@ -9,15 +9,40 @@ Batch reviews over a whole folder go through co_lectr.cli instead.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+log = logging.getLogger("co_lectr")
+
+
+def _run_sync(coro):
+    """Run a coroutine to completion from a synchronous tool.
+
+    The interactive tools ADK calls are plain sync functions, but the theme
+    conflict check is async. `asyncio.run` is right when this thread has no event
+    loop; if one is already running (an async caller), it would raise, so the
+    coroutine is handed to a fresh loop on a worker thread instead. This keeps
+    approve_theme a normal sync tool and avoids depending on the runtime to await
+    an async one.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(lambda: asyncio.run(coro)).result()
 
 from google.adk.agents import LlmAgent  # pyright: ignore[reportMissingImports]
 
 from .aggregator import digest, render
+from .github import GitHubClient
 from .layer1 import analyse
 from .reviewer import MODEL, REVIEW_POLICY
 from .store import UNASSIGNED, Store, class_id_from
+from .themes import format_theme_comment, theme_conflict
 
 # Every tool path is resolved under this root and checked against it. Point it at
 # the real course checkout with COLECTR_SUBMISSIONS_ROOT.
@@ -42,6 +67,16 @@ You are talking to the lecturer, not to the student. Your tools:
 - flagged_reviews(class_id, milestone) - the reviews where a prompt-injection attempt was detected in a
   student's submission. Use this when the lecturer asks whether anyone tried to game the reviewer, or as a
   safety check before trusting a milestone's questions.
+- pending_themes(class_id) - the project themes students have proposed that are waiting for approval. Each
+  student names a project in .colectr/project.yml; a theme unique in the class is held pending until it is
+  approved. Show these when the lecturer asks who is waiting on a theme.
+- approve_theme(class_id, student) / reject_theme(class_id, student) - act on a pending theme. Approving
+  records it to the student, lets them start building, and posts the decision to their pull request; it will
+  refuse if the theme duplicates one already approved in the class, so if it returns such an error, say so and
+  do not force it. Rejecting frees the theme and tells the student to pick another. Only approve or reject when
+  the lecturer tells you to - these change a student's standing. Both report "notified": whether the student's
+  PR comment went out (it needs a GitHub token in this environment); if false, tell the lecturer to inform the
+  student themselves.
 
 If the lecturer names a student, run the checks, read what you need, then give your questions.
 If they ask about the class, use class_digest (or stored_class_digest for the milestone accumulated in
@@ -192,10 +227,125 @@ def flagged_reviews(class_id: str = "", milestone: str = "") -> dict:
     return {"flagged": Store.open().flagged_reviews(class_id, milestone)}
 
 
+def pending_themes(class_id: str) -> dict:
+    """Project themes proposed in a class that are waiting for approval.
+
+    Each student names their project in .colectr/project.yml; a theme unique in
+    the class is reserved and held pending until the lecturer approves it.
+
+    Args:
+        class_id: the class, e.g. "12a".
+
+    Returns:
+        dict with "pending" (each: student, theme, spec, pr), or "error" if
+        Firestore is not configured.
+    """
+    if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return {"error": "Firestore is not configured (no GOOGLE_APPLICATION_CREDENTIALS)"}
+    rows = Store.open().list_themes(class_id, status="pending")
+    return {"pending": [
+        {"student": r.get("student"), "theme": r.get("theme"),
+         "spec": r.get("spec"), "pr": r.get("pr")}
+        for r in rows
+    ]}
+
+
+def _notify_student(theme_doc: dict, body: str) -> bool:
+    """Post a decision back to the student's pull request. True if it went out.
+
+    The theme doc carries the repo and PR it was proposed on, so approval and
+    rejection close the loop where the student is watching — their PR — instead
+    of stopping at a Firestore write they never see. Needs GITHUB_TOKEN in this
+    (the lecturer's) environment; without it the decision still stands, the
+    student just is not notified automatically.
+    """
+    token = os.environ.get("GITHUB_TOKEN")
+    repo, pr = theme_doc.get("repo"), theme_doc.get("pr")
+    if not (token and repo and pr):
+        return False
+    try:
+        GitHubClient(token).post_comment(repo, pr, body)
+        return True
+    except Exception:
+        # Best-effort: a decision must not be lost because a notification failed.
+        log.exception("failed to notify %s PR#%s of a theme decision", repo, pr)
+        return False
+
+
+def approve_theme(class_id: str, student: str) -> dict:
+    """Approve a student's pending project theme, recording it to them.
+
+    Approving is what lets the student start building: it writes the theme onto
+    their profile, marks the class registry approved, and tells the student on
+    their pull request. Before it commits, the theme is checked once more against
+    the themes already approved in the class — the backstop for two look-alike
+    proposals that both slipped through pending — and a duplicate is refused
+    rather than approved a second time.
+
+    Args:
+        class_id: the class, e.g. "12a".
+        student: the student's GitHub login (the PR author).
+
+    Returns:
+        dict with "approved" (the theme), "student" and "notified"; or "error" if
+        there is no pending theme, the theme duplicates an approved one, or
+        Firestore is not configured.
+    """
+    if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return {"error": "Firestore is not configured (no GOOGLE_APPLICATION_CREDENTIALS)"}
+    store = Store.open()
+    pending = [r for r in store.list_themes(class_id, status="pending") if r.get("student") == student]
+    if not pending:
+        return {"error": f"no pending theme for {student} in {class_id}"}
+    mine = pending[0]
+
+    approved_others = [
+        t for t in store.list_themes(class_id, status="approved") if t.get("student") != student
+    ]
+    clash = _run_sync(theme_conflict(mine.get("theme", ""), mine.get("spec", ""), approved_others))
+    if clash is not None:
+        return {"error": (
+            f"'{mine.get('theme', '')}' duplicates an already-approved project "
+            f"({clash.get('theme', '')}); reject it, or have the student change it, "
+            "before approving."
+        )}
+
+    result = store.approve_theme(class_id, mine["slug"])
+    notified = _notify_student(result, format_theme_comment("approved", theme=result.get("theme", "")))
+    return {"approved": result.get("theme", ""), "student": student, "notified": notified}
+
+
+def reject_theme(class_id: str, student: str) -> dict:
+    """Reject a student's pending project theme, freeing it so they can repropose.
+
+    The theme is released and the student is told on their pull request to pick
+    another, so a rejection is not a silent deletion they only learn about by
+    asking.
+
+    Args:
+        class_id: the class, e.g. "12a".
+        student: the student's GitHub login.
+
+    Returns:
+        dict with "rejected" (the theme), "student" and "notified"; or "error" if
+        there is no pending theme for that student or Firestore is not configured.
+    """
+    if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return {"error": "Firestore is not configured (no GOOGLE_APPLICATION_CREDENTIALS)"}
+    store = Store.open()
+    pending = [r for r in store.list_themes(class_id, status="pending") if r.get("student") == student]
+    if not pending:
+        return {"error": f"no pending theme for {student} in {class_id}"}
+    result = store.reject_theme(class_id, pending[0]["slug"])
+    notified = _notify_student(result, format_theme_comment("rejected", theme=result.get("theme", "")))
+    return {"rejected": result.get("theme", ""), "student": student, "notified": notified}
+
+
 root_agent = LlmAgent(
     name="co_lectr",
     model=MODEL,
     description="Reviews student Python submissions with questions, and reports what the class got wrong.",
     instruction=INSTRUCTION,
-    tools=[list_submissions, run_checks, read_file, class_digest, stored_class_digest, flagged_reviews],
+    tools=[list_submissions, run_checks, read_file, class_digest, stored_class_digest, flagged_reviews,
+           pending_themes, approve_theme, reject_theme],
 )

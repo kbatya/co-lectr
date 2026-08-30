@@ -134,6 +134,38 @@ judging question *"does the agent actively synthesize data rather than just read
 **Degradation.** A missing or malformed `class.yml` still produces that student's review; the findings are
 excluded from every class digest and a warning is logged. One broken file must not stop the other eleven.
 
+## Project themes — unique topics per class (added 2026-08-30, implemented)
+
+Students build one project across the term, so each needs a topic, and no two students in a class may build
+the same one. A student declares theirs in a second repo file, placed the same way as `class.yml`:
+
+```yaml
+# .colectr/project.yml
+theme: A chess engine
+spec: minimax with alpha-beta pruning
+```
+
+**Uniqueness is judged by meaning, not string equality** — "a chess engine" and "chess-playing AI" are the
+same project. That needs the model, so a third `LlmAgent` (`themes.py`) compares a proposed theme against the
+themes classmates have already claimed. On the PR that adds `project.yml`, a free theme is reserved (held
+`pending`); a clash is turned back with a comment. The lecturer then approves or rejects from `adk web`
+(`pending_themes` / `approve_theme` / `reject_theme`), and the decision is posted to the student's PR;
+approval records the theme to the student, and normal code review resumes on later PRs.
+
+**Two-layer uniqueness, mirroring the review.** The cheap exact half is an atomic `create()` on a hashed slug
+(two identical themes can't both reserve); the model is the semantic half on top. The lecturer is the human
+backstop the automatic check can't fully replace, since a model verdict is fallible both ways.
+
+**Every theme string is untrusted.** The proposal *and* every classmate's claimed theme are student-authored,
+so all of it is fenced as data in the judge's prompt (delimiter stripped), the model's free-text reason is
+never shown to a student, and echoed theme names are neutralised — a directive in one student's theme can't
+steer another's check or inject into their PR. A rejected theme is recorded on the student's profile so
+re-pushing the same words can't quietly re-queue it, and approval re-checks against already-approved themes.
+
+**Storage.** A new per-class subcollection `classes/{class}/themes/{slug}`; approval also writes the theme
+onto `students/{login}`. `unassigned` submissions (no readable `class.yml`) are not gated — there is no class
+for a topic to be unique within.
+
 ## Security — non-negotiable from day one
 
 Student-submitted code is untrusted input reaching an LLM that influences a grade. In a class of twelve, someone

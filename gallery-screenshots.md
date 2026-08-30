@@ -11,6 +11,7 @@ Gallery order that tells the story:
 3. **The `adk web` lecturer view** (below)
 4. `card-digest.png` — the class digest (already made)
 5. `card-review.png` — code → questions (already made)
+6. `card-theme.png` — unique project topics: same idea, different words, caught (already made)
 
 ---
 
@@ -64,6 +65,11 @@ per-class signal back — the differentiator.
   (the Firestore-accumulated picture) — nice, but optional.
 - For a second strong frame, ask `Did anyone try to game the reviewer?` to show
   `flagged_reviews`.
+- For the **project-theme** feature, ask `Which project themes are waiting for
+  approval?` then `Approve student_04's theme` — the agent calls `pending_themes`
+  and `approve_theme`, and (with a `GITHUB_TOKEN` set) posts the decision to the
+  student's PR. A clean before/after of a topic being reserved and then approved
+  makes a strong extra frame.
 
 ---
 

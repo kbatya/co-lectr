@@ -9,9 +9,15 @@ import os
 import uuid
 
 import pytest
-
 from co_lectr.layer1 import Finding
-from co_lectr.store import UNASSIGNED, Store, class_id_from, review_id, spec_id
+from co_lectr.store import (
+    UNASSIGNED,
+    Store,
+    class_id_from,
+    review_id,
+    spec_id,
+    theme_slug,
+)
 
 needs_firestore = pytest.mark.skipif(
     not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
@@ -74,6 +80,78 @@ def test_class_config_short_circuits_an_unassigned_submission():
 
 
 @needs_firestore
+def test_reserve_theme_is_won_once_and_lost_the_second_time(store_and_ids):
+    # Two students committing the identical theme race to create one slug doc;
+    # exactly one wins the reservation.
+    store, tag, created = store_and_ids
+    klass, slug = f"{tag}_c", theme_slug("A chess engine")
+    created["classes"].append(klass)
+
+    assert store.reserve_theme(klass, slug, student="ada", theme="A chess engine", spec="x") is True
+    assert store.reserve_theme(klass, slug, student="bob", theme="A chess engine", spec="y") is False
+    assert store.get_theme(klass, slug)["student"] == "ada"  # the first writer stands
+
+
+@needs_firestore
+def test_list_themes_filters_by_status(store_and_ids):
+    store, tag, created = store_and_ids
+    klass, s_a, s_b = f"{tag}_c", f"{tag}_a", f"{tag}_b"
+    created["classes"].append(klass)
+    created["students"].extend([s_a, s_b])
+    store.reserve_theme(klass, "a", student=s_a, theme="Alpha", spec="")
+    store.reserve_theme(klass, "b", student=s_b, theme="Beta", spec="")
+    store.approve_theme(klass, "a")
+
+    assert {t["slug"] for t in store.list_themes(klass, status="pending")} == {"b"}
+    assert {t["slug"] for t in store.list_themes(klass)} == {"a", "b"}
+
+
+@needs_firestore
+def test_approve_theme_records_it_to_the_student(store_and_ids):
+    store, tag, created = store_and_ids
+    klass, student = f"{tag}_c", f"{tag}_s"
+    created["classes"].append(klass); created["students"].append(student)
+    store.reserve_theme(klass, "chess", student=student, theme="A chess engine", spec="minimax")
+
+    assert store.has_approved_theme(student) is False
+    approved = store.approve_theme(klass, "chess")
+
+    assert approved["status"] == "approved"
+    assert store.has_approved_theme(student) is True
+    assert store.profile(student)["theme"] == "A chess engine"
+    assert store.get_theme(klass, "chess")["status"] == "approved"
+
+
+@needs_firestore
+def test_reject_theme_frees_the_slug_for_a_classmate_but_bars_the_student(store_and_ids):
+    store, tag, created = store_and_ids
+    klass = f"{tag}_c"
+    rejected_s, other_s = f"{tag}_rej", f"{tag}_oth"
+    created["classes"].append(klass)
+    created["students"].extend([rejected_s, other_s])
+    store.reserve_theme(klass, "chess", student=rejected_s, theme="A chess engine", spec="")
+
+    assert store.reject_theme(klass, "chess")["theme"] == "A chess engine"
+    assert store.get_theme(klass, "chess") is None
+    # The bar is recorded on the rejected student's own profile...
+    assert "chess" in store.profile(rejected_s).get("rejected_themes", [])
+    # ...but the slug is free, so a classmate can still claim the same words.
+    assert store.reserve_theme(klass, "chess", student=other_s, theme="A chess engine", spec="") is True
+
+
+@needs_firestore
+def test_release_theme_frees_a_students_own_pending_slug(store_and_ids):
+    # The revision path: a student editing to a new theme frees the old slug.
+    store, tag, created = store_and_ids
+    klass = f"{tag}_c"
+    created["classes"].append(klass)
+    store.reserve_theme(klass, "chess", student="ada", theme="A chess engine", spec="")
+
+    store.release_theme(klass, "chess")
+    assert store.get_theme(klass, "chess") is None
+
+
+@needs_firestore
 def test_class_config_reads_the_class_document(store_and_ids):
     store, tag, created = store_and_ids
     klass = f"{tag}_c"
@@ -89,8 +167,9 @@ def test_class_config_reads_the_class_document(store_and_ids):
 
 @pytest.fixture
 def store_and_ids():
-    from dotenv import load_dotenv
     from pathlib import Path
+
+    from dotenv import load_dotenv
 
     load_dotenv(Path(__file__).parent.parent / ".env")
     store = Store.open()
@@ -105,6 +184,8 @@ def store_and_ids():
         ref = store.db.collection("classes").document(cid)
         for m in ref.collection("milestones").stream():
             m.reference.delete()
+        for t in ref.collection("themes").stream():
+            t.reference.delete()
         ref.delete()
 
 

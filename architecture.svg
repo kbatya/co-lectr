@@ -12,7 +12,7 @@
 
   <!-- Header -->
   <text x="48" y="66" font-size="42" font-weight="700" fill="#1f2933">Co-Lectr</text>
-  <text x="50" y="100" font-size="19" fill="#5b6b7a">Socratic code review for a classroom — delivered on every pull request, running on Google Cloud</text>
+  <text x="50" y="100" font-size="19" fill="#5b6b7a">Unique project topics and Socratic code review for a classroom — on every pull request, running on Google Cloud</text>
 
   <!-- ===== Left column: Student + GitHub ===== -->
   <rect x="55" y="150" width="290" height="80" rx="12" fill="#f3f4f6" stroke="#24292f" stroke-width="1.5"/>
@@ -75,16 +75,18 @@
   <!-- ===== Right column ===== -->
   <!-- Firestore -->
   <rect x="985" y="200" width="448" height="150" rx="12" fill="#fef7e0" stroke="#f9ab00" stroke-width="1.8"/>
-  <text x="1006" y="232" font-size="16" font-weight="700" fill="#b06000">Firestore</text>
-  <text x="1006" y="260" font-size="13.5" fill="#3c4a56">students/{id} — recurring habits</text>
-  <text x="1006" y="284" font-size="13.5" fill="#3c4a56">classes/{id} — milestone digest</text>
-  <text x="1006" y="312" font-size="12.5" fill="#5b6b7a">powers the &#8220;you&#8217;ve done this before&#8221; memory</text>
+  <text x="1006" y="228" font-size="16" font-weight="700" fill="#b06000">Firestore</text>
+  <text x="1006" y="254" font-size="13.5" fill="#3c4a56">students/{id} — recurring habits</text>
+  <text x="1006" y="277" font-size="13.5" fill="#3c4a56">classes/{id} — milestone digest</text>
+  <text x="1006" y="300" font-size="13.5" fill="#3c4a56">classes/{id}/themes — claimed project topics</text>
+  <text x="1006" y="326" font-size="12.5" fill="#5b6b7a">powers memory &#183; unique-topic reservation</text>
 
   <!-- Lecturer agent -->
   <rect x="985" y="378" width="448" height="140" rx="12" fill="#f3e8fd" stroke="#a142f4" stroke-width="1.8"/>
-  <text x="1006" y="410" font-size="16" font-weight="700" fill="#7b1fa2">Lecturer agent &#183; Google ADK</text>
-  <text x="1006" y="438" font-size="13.5" fill="#3c4a56">adk web — reads the class digest</text>
-  <text x="1006" y="468" font-size="15" font-style="italic" fill="#1f2933">&#8220;What did class 12-A get wrong?&#8221;</text>
+  <text x="1006" y="408" font-size="16" font-weight="700" fill="#7b1fa2">Lecturer agent &#183; Google ADK</text>
+  <text x="1006" y="434" font-size="13.5" fill="#3c4a56">adk web — class digest &#183; approves project themes</text>
+  <text x="1006" y="464" font-size="15" font-style="italic" fill="#1f2933">&#8220;What did class 12-A get wrong?&#8221;</text>
+  <text x="1006" y="492" font-size="15" font-style="italic" fill="#1f2933">&#8220;Approve student_04&#8217;s project theme.&#8221;</text>
 
   <!-- Gemini API -->
   <rect x="985" y="546" width="212" height="100" rx="12" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.8"/>
@@ -125,5 +127,6 @@
   <text x="318" y="942" font-size="13.5" font-weight="600" fill="#188038">post Socratic questions as a PR comment</text>
 
   <!-- footer tag -->
-  <text x="985" y="682" font-size="12" fill="#8a97a3">Also: pytest sandboxing opt-in &#183; per-class config overrides</text>
+  <text x="985" y="690" font-size="12" fill="#8a97a3">Also: unique project topics, model-judged (themes.py) &#183; pytest sandboxing opt-in</text>
+  <text x="985" y="708" font-size="12" fill="#8a97a3">&#183; per-class config overrides</text>
 </svg>

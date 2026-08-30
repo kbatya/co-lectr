@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1000" viewBox="0 0 1500 1000" font-family="'Segoe UI', Roboto, -apple-system, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="agr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#188038"/>
+    </marker>
+    <marker id="aam" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#c26401"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1500" height="1000" fill="#ffffff"/>
+
+  <!-- Header -->
+  <text x="60" y="72" font-size="38" font-weight="700" fill="#1f2933">One project topic per student</text>
+  <text x="62" y="108" font-size="19" fill="#5b6b7a">Co-Lectr reserves a project theme only if it is unique in the class — judged by meaning, not spelling, then cleared by the lecturer.</text>
+
+  <!-- ============ ROW 1 — reserved & approved ============ -->
+  <!-- Left: the proposal file -->
+  <rect x="60" y="150" width="560" height="290" rx="12" fill="#f6f8fa" stroke="#d8dee4" stroke-width="1.5"/>
+  <circle cx="88" cy="184" r="5" fill="#fe5f57"/><circle cx="106" cy="184" r="5" fill="#febc2e"/><circle cx="124" cy="184" r="5" fill="#28c840"/>
+  <text x="150" y="190" font-size="14.5" font-weight="600" fill="#3c4a56" font-family="Consolas, monospace">.colectr/project.yml</text>
+  <text x="596" y="190" font-size="13" fill="#8a97a3" text-anchor="end">student_04</text>
+  <line x1="60" y1="206" x2="620" y2="206" stroke="#e6eaee" stroke-width="1.5"/>
+  <g font-family="Consolas, 'Courier New', monospace" font-size="17">
+    <text x="90" y="262"><tspan fill="#0550ae">theme:</tspan> <tspan fill="#0a3069">A chess engine</tspan></text>
+    <text x="90" y="298"><tspan fill="#0550ae">spec:</tspan>  <tspan fill="#0a3069">minimax with alpha-beta pruning</tspan></text>
+  </g>
+  <rect x="90" y="352" width="196" height="28" rx="14" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.1"/>
+  <text x="188" y="371" font-size="13.5" font-weight="600" fill="#1558c0" text-anchor="middle">first to propose it</text>
+  <text x="90" y="412" font-size="14" fill="#8a97a3">committed on the pull request that opens the project</text>
+
+  <!-- connector -->
+  <path d="M622,295 L676,295" fill="none" stroke="#188038" stroke-width="2.2" marker-end="url(#agr)"/>
+  <text x="649" y="284" font-size="12.5" font-weight="600" fill="#188038" text-anchor="middle">unique</text>
+
+  <!-- Right: the decision comment (approved) -->
+  <rect x="680" y="150" width="760" height="290" rx="12" fill="#ffffff" stroke="#bfe3c9" stroke-width="1.8"/>
+  <circle cx="722" cy="192" r="18" fill="#12a4a4"/>
+  <text x="722" y="199" font-size="18" font-weight="700" fill="#ffffff" text-anchor="middle">C</text>
+  <text x="752" y="188" font-size="17" font-weight="700" fill="#1f2933">Co-Lectr</text>
+  <text x="752" y="208" font-size="13" fill="#8a97a3">on student_04's pull request</text>
+  <rect x="1300" y="172" width="122" height="26" rx="13" fill="#e6f4ea" stroke="#188038" stroke-width="1.2"/>
+  <text x="1361" y="189" font-size="12.5" font-weight="700" fill="#0d652d" text-anchor="middle">approved</text>
+  <line x1="680" y1="228" x2="1440" y2="228" stroke="#eef1f4" stroke-width="1.5"/>
+  <text x="712" y="262" font-size="17" font-weight="700" fill="#1f2933">Co-Lectr — project theme</text>
+  <text x="712" y="296" font-size="15.5" fill="#1f2933">Your theme <tspan font-family="Consolas, monospace" font-size="14.5">A chess engine</tspan> is reserved and approved —</text>
+  <text x="712" y="318" font-size="15.5" fill="#1f2933">you're clear to start building.</text>
+  <rect x="712" y="344" width="330" height="28" rx="8" fill="#e6f4ea"/>
+  <text x="726" y="363" font-size="13.5" font-weight="600" fill="#0d652d">reserved when proposed  →  approved by lecturer</text>
+  <text x="712" y="406" font-size="14" fill="#8a97a3">No one else in the class can claim this project now.</text>
+
+  <!-- ============ ROW 2 — turned back (same idea, different words) ============ -->
+  <!-- Left: the proposal file -->
+  <rect x="60" y="470" width="560" height="290" rx="12" fill="#f6f8fa" stroke="#d8dee4" stroke-width="1.5"/>
+  <circle cx="88" cy="504" r="5" fill="#fe5f57"/><circle cx="106" cy="504" r="5" fill="#febc2e"/><circle cx="124" cy="504" r="5" fill="#28c840"/>
+  <text x="150" y="510" font-size="14.5" font-weight="600" fill="#3c4a56" font-family="Consolas, monospace">.colectr/project.yml</text>
+  <text x="596" y="510" font-size="13" fill="#8a97a3" text-anchor="end">student_09</text>
+  <line x1="60" y1="526" x2="620" y2="526" stroke="#e6eaee" stroke-width="1.5"/>
+  <g font-family="Consolas, 'Courier New', monospace" font-size="17">
+    <text x="90" y="582"><tspan fill="#0550ae">theme:</tspan> <tspan fill="#0a3069">chess-playing AI</tspan></text>
+    <text x="90" y="618"><tspan fill="#0550ae">spec:</tspan>  <tspan fill="#0a3069">a neural net that learns to play chess</tspan></text>
+  </g>
+  <rect x="90" y="672" width="214" height="28" rx="14" fill="#fdf0d3" stroke="#f9ab00" stroke-width="1.1"/>
+  <text x="197" y="691" font-size="13.5" font-weight="600" fill="#b06000" text-anchor="middle">different words, same idea</text>
+  <text x="90" y="732" font-size="14" fill="#8a97a3">string-matching would miss it — the meaning is the same</text>
+
+  <!-- connector -->
+  <path d="M622,615 L676,615" fill="none" stroke="#c26401" stroke-width="2.2" marker-end="url(#aam)"/>
+  <text x="649" y="604" font-size="12.5" font-weight="600" fill="#c26401" text-anchor="middle">clash</text>
+
+  <!-- Right: the decision comment (turned back) -->
+  <rect x="680" y="470" width="760" height="290" rx="12" fill="#ffffff" stroke="#f6d9a6" stroke-width="1.8"/>
+  <circle cx="722" cy="512" r="18" fill="#12a4a4"/>
+  <text x="722" y="519" font-size="18" font-weight="700" fill="#ffffff" text-anchor="middle">C</text>
+  <text x="752" y="508" font-size="17" font-weight="700" fill="#1f2933">Co-Lectr</text>
+  <text x="752" y="528" font-size="13" fill="#8a97a3">on student_09's pull request</text>
+  <rect x="1276" y="492" width="146" height="26" rx="13" fill="#fdf0d3" stroke="#f9ab00" stroke-width="1.2"/>
+  <text x="1349" y="509" font-size="12.5" font-weight="700" fill="#b06000" text-anchor="middle">not unique</text>
+  <line x1="680" y1="548" x2="1440" y2="548" stroke="#eef1f4" stroke-width="1.5"/>
+  <text x="712" y="582" font-size="17" font-weight="700" fill="#1f2933">Co-Lectr — project theme</text>
+  <text x="712" y="616" font-size="15.5" fill="#1f2933">This is too close to a project a classmate has already</text>
+  <text x="712" y="638" font-size="15.5" fill="#1f2933">claimed (<tspan font-family="Consolas, monospace" font-size="14.5">A chess engine</tspan>), so it can't be reserved.</text>
+  <text x="712" y="672" font-size="15.5" fill="#1f2933">Pick a different angle and update <tspan font-family="Consolas, monospace" font-size="14.5">project.yml</tspan>.</text>
+  <text x="712" y="726" font-size="14" fill="#8a97a3">Judged by a Gemini call in themes.py — a model, not a diff.</text>
+
+  <!-- Footer callout -->
+  <rect x="60" y="800" width="1380" height="120" rx="14" fill="#f7fbff" stroke="#aecbfa" stroke-width="1.5"/>
+  <text x="90" y="850" font-size="19" font-weight="700" fill="#1558c0">Unique by meaning, not by spelling.</text>
+  <text x="90" y="882" font-size="16.5" fill="#3c4a56">“A chess engine” and “chess-playing AI” are the same project — a Gemini call catches it, the lecturer approves, and two</text>
+  <text x="90" y="906" font-size="16.5" fill="#3c4a56">students never ship the same build. An atomic reservation is the exact-match half; the model is the semantic half on top.</text>
+</svg>
